@@ -1,9 +1,8 @@
-# 민감 데이터 (PhysioNet DUA — 절대 커밋 금지)
-data/mimic/
-data/eicu/
-data/raw/
-
-# PMC / 출력 (용량 큼)
+# 전체 데이터 (PhysioNet DUA — 커밋 금지, demo는 허용)
+data/raw/mimic4/hosp/
+data/raw/mimic4/icu/
+data/raw/mimic4/note/
+data/raw/eicu/
 data/pmc/
 data/output/
 
