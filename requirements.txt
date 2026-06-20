@@ -1,0 +1,13 @@
+anthropic
+langgraph
+langchain
+langchain-anthropic
+chromadb
+sentence-transformers
+pydantic
+pandas
+textstat
+scikit-learn
+transformers
+torch
+python-dotenv
