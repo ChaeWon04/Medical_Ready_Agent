@@ -1,11 +1,3 @@
-# 전체 데이터 (PhysioNet DUA — 커밋 금지, demo는 허용)
-data/raw/mimic4/hosp/
-data/raw/mimic4/icu/
-data/raw/mimic4/note/
-data/raw/eicu/
-data/pmc/
-data/output/
-
 # ChromaDB 로컬 빌드
 chroma_db/
 rag/chroma_db/
