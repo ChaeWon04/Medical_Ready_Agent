@@ -71,8 +71,14 @@ class QualityMetadata(BaseModel):
 class AIReadyRecord(BaseModel):
     """최종 AI-Ready 출력 스키마"""
     record_id: str
-    source: Literal["synthea", "mimic_iv"]
+    source: Literal["synthea", "mimic_iv", "eicu"]
     patient_id: str
+
+    # 환자 기본 정보 (juyoung 브랜치)
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    chief_complaint: Optional[str] = None
+    symptoms: List[str] = []
 
     # Agent 1 출력
     diagnoses: List[Diagnosis] = []
@@ -86,7 +92,10 @@ class AIReadyRecord(BaseModel):
     # Agent 2 출력
     quality: QualityMetadata
 
+    # 사람 검토 필요 플래그 (juyoung 브랜치)
+    flagged: bool = False
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     def is_valid(self) -> bool:
-        return self.quality.status == DataStatus.AI_READY
+        return self.quality.status == DataStatus.AI_READY and not self.flagged

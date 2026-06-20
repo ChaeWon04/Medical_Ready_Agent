@@ -27,7 +27,14 @@ def parse_node(state: PipelineState) -> PipelineState:
         raw = state["raw_input"]
 
         if source == "synthea":
-            record = agent1.parse_synthea(fhir_path=raw["fhir_path"])
+            record = agent1.parse_synthea(
+                pid=raw["pid"],
+                patients=raw["patients"],
+                conditions=raw["conditions"],
+                medications=raw["medications"],
+                encounters=raw["encounters"],
+                observations=raw["observations"],
+            )
         elif source == "mimic_iv":
             if "note_text" in raw:
                 record = agent1.parse_mimic_note(

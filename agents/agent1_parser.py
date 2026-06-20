@@ -51,103 +51,103 @@ SNOMED_TO_ICD10 = {
 
 class Agent1Parser:
 
-    # ── Synthea FHIR JSON (룰 기반) ───────────────────────────────
+    # ── Synthea CSV (룰 기반, juyoung 브랜치) ────────────────────
 
-    def parse_synthea(self, fhir_path: str) -> AIReadyRecord:
-        """FHIR Bundle JSON 파일 1개(환자 1명) → AIReadyRecord"""
-        import json as _json
-        with open(fhir_path, encoding="utf-8") as f:
-            bundle = _json.load(f)
+    def parse_synthea(
+        self,
+        pid: str,
+        patients: pd.DataFrame,
+        conditions: pd.DataFrame,
+        medications: pd.DataFrame,
+        encounters: pd.DataFrame,
+        observations: pd.DataFrame,
+    ) -> AIReadyRecord:
+        p = patients[patients["Id"] == pid].iloc[0]
+        age = self._calc_age(str(p.get("BIRTHDATE", "")))
+        gender = str(p.get("GENDER", ""))
 
-        entries = bundle.get("entry", [])
-        resources = [e["resource"] for e in entries if "resource" in e]
-
-        patient_id = self._fhir_patient_id(resources)
-        diagnoses = self._fhir_diagnoses(resources)
-        medications = self._fhir_medications(resources)
-        observations = self._fhir_observations(resources)
+        diagnoses = self._synthea_diagnoses(conditions, pid)
+        meds = self._synthea_medications(medications, pid)
+        obs = self._synthea_observations(observations, pid)
+        chief_complaint = self._synthea_chief_complaint(encounters, pid)
+        symptoms = self._synthea_symptoms(observations, pid, [d.description for d in diagnoses])
+        encounter_type = self._synthea_encounter_type(encounters, pid)
 
         return AIReadyRecord(
             record_id=str(uuid.uuid4()),
             source="synthea",
-            patient_id=patient_id,
+            patient_id=pid,
+            age=age,
+            gender=gender,
+            chief_complaint=chief_complaint,
+            symptoms=symptoms,
             diagnoses=diagnoses,
-            medications=medications,
-            observations=observations,
+            medications=meds,
+            observations=obs,
             quality=QualityMetadata(reflexion_loops=0, q_index=0.0, status=DataStatus.NEEDS_REVIEW),
         )
 
-    def _fhir_patient_id(self, resources: list) -> str:
-        for r in resources:
-            if r.get("resourceType") == "Patient":
-                return r.get("id", str(uuid.uuid4()))
-        return str(uuid.uuid4())
+    def _calc_age(self, birthdate_str: str) -> Optional[int]:
+        from datetime import date
+        try:
+            birth = date.fromisoformat(birthdate_str[:10])
+            today = date.today()
+            return today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+        except Exception:
+            return None
 
-    def _fhir_diagnoses(self, resources: list) -> list[Diagnosis]:
+    def _synthea_diagnoses(self, df: pd.DataFrame, pid: str) -> list[Diagnosis]:
         results = []
-        for r in resources:
-            if r.get("resourceType") != "Condition":
-                continue
-            codings = r.get("code", {}).get("coding", [])
-            if not codings:
-                continue
-            snomed_code = codings[0].get("code", "")
-            description = codings[0].get("display", "")
-            clinical_status = (
-                r.get("clinicalStatus", {}).get("coding", [{}])[0].get("code", "active")
-            )
-            icd10 = SNOMED_TO_ICD10.get(snomed_code) or self._llm_to_icd10(description)
-            if not icd10:
-                continue
-            results.append(Diagnosis(
-                icd10_code=icd10,
-                description=description,
-                confidence="confirmed" if clinical_status == "active" else "ruled_out",
-                is_negated=clinical_status == "resolved",
-            ))
+        for _, row in df[df["PATIENT"] == pid].iterrows():
+            desc = str(row.get("DESCRIPTION", ""))
+            code = self._llm_to_icd10(desc)
+            if code:
+                results.append(Diagnosis(icd10_code=code, description=desc, confidence="confirmed"))
         return results
 
-    def _fhir_medications(self, resources: list) -> list[Medication]:
-        results = []
-        for r in resources:
-            if r.get("resourceType") != "MedicationRequest":
-                continue
-            if r.get("status") not in ("active", "completed"):
-                continue
-            display = (
-                r.get("medicationCodeableConcept", {}).get("coding", [{}])[0].get("display", "")
-            )
-            name, dose, unit = self._parse_med_display(display)
-            results.append(Medication(name=name, dose=dose, unit=unit))
-        return results
+    def _synthea_medications(self, df: pd.DataFrame, pid: str) -> list[Medication]:
+        return [
+            Medication(name=str(row.get("DESCRIPTION", "")))
+            for _, row in df[df["PATIENT"] == pid].iterrows()
+        ]
 
-    def _parse_med_display(self, display: str):
-        """'Clopidogrel 75 MG Oral Tablet' → (name, dose, unit)"""
-        match = re.match(r"^(.*?)\s+([\d.]+)\s*(MG|G|MCG|ML)\b", display, re.IGNORECASE)
-        if match:
-            name = match.group(1).strip()
-            dose = self._safe_float(match.group(2))
-            unit = match.group(3).lower().replace("ml", "mL")
-            return name, dose, unit
-        return display, None, None
-
-    def _fhir_observations(self, resources: list) -> list[Observation]:
-        results = []
-        for r in resources:
-            if r.get("resourceType") != "Observation":
-                continue
-            name = r.get("code", {}).get("text") or (
-                r.get("code", {}).get("coding", [{}])[0].get("display", "")
+    def _synthea_observations(self, df: pd.DataFrame, pid: str) -> list[Observation]:
+        return [
+            Observation(
+                name=str(row.get("DESCRIPTION", "")),
+                value=str(row.get("VALUE", "")),
+                unit=str(row.get("UNITS", "")) or None,
             )
-            vq = r.get("valueQuantity", {})
-            if not vq:
-                continue
-            results.append(Observation(
-                name=name,
-                value=str(vq.get("value", "")),
-                unit=vq.get("unit") or None,
-            ))
-        return results
+            for _, row in df[df["PATIENT"] == pid].iterrows()
+            if row.get("TYPE") != "text"
+        ]
+
+    def _synthea_chief_complaint(self, encounters: pd.DataFrame, pid: str) -> Optional[str]:
+        enc = encounters[encounters["PATIENT"] == pid]
+        reason = enc.sort_values("START", ascending=False)["REASONDESCRIPTION"].dropna()
+        return str(reason.iloc[0]) if not reason.empty else None
+
+    def _synthea_symptoms(self, observations: pd.DataFrame, pid: str, diagnoses: list[str]) -> list[str]:
+        obs = observations[observations["PATIENT"] == pid]
+        symptoms = obs[obs["TYPE"] == "text"]["DESCRIPTION"].dropna().unique().tolist()
+        if not symptoms and diagnoses:
+            raw = llm.generate(
+                system_prompt="Return symptoms as comma-separated list only. No explanation.",
+                user_prompt=f"List 3-5 main symptoms for these diagnoses: {diagnoses}",
+            )
+            symptoms = [s.strip() for s in raw.split(",") if s.strip()]
+        return symptoms
+
+    def _synthea_encounter_type(self, encounters: pd.DataFrame, pid: str) -> Optional[str]:
+        enc = encounters[encounters["PATIENT"] == pid]
+        if enc.empty:
+            return None
+        classes = enc["ENCOUNTERCLASS"].str.lower().values
+        if any("inpatient" in c for c in classes):
+            return "inpatient"
+        if any("emergency" in c for c in classes):
+            return "emergency"
+        return "outpatient"
 
     # ── MIMIC-IV ──────────────────────────────────────────────────
 

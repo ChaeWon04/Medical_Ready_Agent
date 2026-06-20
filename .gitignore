@@ -1,0 +1,34 @@
+# 민감 데이터 (PhysioNet DUA — 절대 커밋 금지)
+data/mimic/
+data/eicu/
+data/raw/
+
+# PMC / 출력 (용량 큼)
+data/pmc/
+data/output/
+
+# ChromaDB 로컬 빌드
+chroma_db/
+rag/chroma_db/
+
+# 환경변수
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pth
+*.bin
+*.safetensors
+*.gguf
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -12,15 +12,25 @@ from graph.pipeline import pipeline
 
 
 def run_synthea(data_dir: Path):
-    fhir_files = list(data_dir.glob("*.json"))
-    # 병원/의사 정보 파일 제외
-    fhir_files = [f for f in fhir_files if not f.name.startswith(("hospital", "practitioner"))]
+    patients    = pd.read_csv(data_dir / "patients.csv")
+    conditions  = pd.read_csv(data_dir / "conditions.csv")
+    medications = pd.read_csv(data_dir / "medications.csv")
+    encounters  = pd.read_csv(data_dir / "encounters.csv")
+    observations = pd.read_csv(data_dir / "observations.csv")
 
-    print(f"[Synthea] 환자 {len(fhir_files)}명 처리 시작")
-    for fhir_path in fhir_files:
+    pids = patients["Id"].tolist()
+    print(f"[Synthea] 환자 {len(pids)}명 처리 시작")
+    for pid in pids:
         state = pipeline.invoke({
             "source": "synthea",
-            "raw_input": {"fhir_path": str(fhir_path)},
+            "raw_input": {
+                "pid": pid,
+                "patients": patients,
+                "conditions": conditions,
+                "medications": medications,
+                "encounters": encounters,
+                "observations": observations,
+            },
             "record": None,
             "error": None,
         })
