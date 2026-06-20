@@ -1,79 +1,135 @@
 import json
 import os
-from config import USE_CLAUDE_API, MAX_REFINE_ITERATIONS, QUALITY_THRESHOLD, CLAUDE_MODEL
-from schemas.ai_ready_schema import AIReadyRecord
-from rag.retriever import retrieve
-from models.model_loader import generate
+import re
+from models.model_loader import llm
+from rag.retriever import retriever
+from schemas.ai_ready_schema import AIReadyRecord, QualityMetadata, DataStatus
+from config import MAX_REFLEXION_LOOPS, USE_CLAUDE_API, CLAUDE_MODEL
+
+CRITIC_SYSTEM = """You are a medical data quality auditor.
+Check the given medical record for errors and return ONLY valid JSON. No explanation."""
+
+CRITIC_PROMPT = """Check this medical record for errors using the reference context below.
+
+Reference context from medical literature:
+{context}
+
+Medical record:
+{record}
+
+Return JSON with this format:
+{{
+  "issues": [
+    {{"field": "...", "issue": "...", "suggested_fix": "..."}}
+  ],
+  "passed": true
+}}
+
+Check for:
+1. ICD-10 code mismatch with description
+2. Medication dose errors (unit mismatch: g vs mg vs mcg)
+3. Negation failures (ruled_out diagnosis marked as confirmed)
+4. Hallucinated values not supported by context
+5. Copy-forward errors (duplicate identical entries)
+
+If no issues found, return {{"issues": [], "passed": true}}"""
+
+REFINE_SYSTEM = """You are a medical data correction assistant.
+Fix the medical record based on the issues list and return ONLY the corrected record as valid JSON."""
+
+REFINE_PROMPT = """Fix the medical record below based on the issues list.
+
+Issues to fix:
+{issues}
+
+Original record:
+{record}
+
+Return the corrected record in the same JSON structure. No explanation."""
 
 
-def _critic_local(record: AIReadyRecord, context: list[str]) -> tuple[float, str]:
-    prompt = (
-        f"You are a medical QA critic. Evaluate this clinical record:\n"
-        f"{record.model_dump_json(indent=2)}\n\n"
-        f"Reference context:\n{chr(10).join(context)}\n\n"
-        'Check: ICD-10 validity, negation errors, clinical consistency.\n'
-        'Return JSON: {"score": 0.0-1.0, "feedback": "..."}'
-    )
-    raw = generate(prompt)
-    try:
-        result = json.loads(raw)
-        return float(result["score"]), result["feedback"]
-    except Exception:
-        return 0.5, raw
+class Agent2Reflexion:
 
+    def run(self, record: AIReadyRecord) -> AIReadyRecord:
+        issues = []
+        loops = 0
 
-def _critic_claude(record: AIReadyRecord, context: list[str]) -> tuple[float, str]:
-    import anthropic
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    prompt = (
-        f"You are a medical QA critic. Evaluate this clinical record:\n"
-        f"{record.model_dump_json(indent=2)}\n\n"
-        f"Reference context:\n{chr(10).join(context)}\n\n"
-        'Check: ICD-10 validity, negation errors, clinical consistency.\n'
-        'Return JSON: {"score": 0.0-1.0, "feedback": "..."}'
-    )
-    msg = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=512,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw = msg.content[0].text
-    try:
-        result = json.loads(raw)
-        return float(result["score"]), result["feedback"]
-    except Exception:
-        return 0.5, raw
+        for loop in range(MAX_REFLEXION_LOOPS):
+            loops = loop + 1
+            issues = self._critic(record)
+            if not issues:
+                break
+            record = self._refine(record, issues)
 
-
-def _refine(record: AIReadyRecord, feedback: str) -> AIReadyRecord:
-    prompt = (
-        f"Fix this clinical record based on feedback.\n"
-        f"Record: {record.model_dump_json()}\n"
-        f"Feedback: {feedback}\n"
-        "Return corrected JSON only."
-    )
-    raw = generate(prompt)
-    try:
-        return AIReadyRecord(**json.loads(raw))
-    except Exception:
+        record.quality = QualityMetadata(
+            reflexion_loops=loops,
+            hallucination_flags=[i.get("issue", "") for i in issues],
+            q_index=self._calc_q_index(record, issues, loops),
+            status=DataStatus.AI_READY if not issues else DataStatus.NEEDS_REVIEW,
+        )
+        record.flagged = record.quality.status == DataStatus.NEEDS_REVIEW
         return record
 
+    def _critic(self, record: AIReadyRecord) -> list[dict]:
+        if USE_CLAUDE_API:
+            return self._critic_claude(record)
+        return self._critic_local(record)
 
-def run(record: AIReadyRecord) -> AIReadyRecord:
-    critic_fn = _critic_claude if USE_CLAUDE_API else _critic_local
-    score, feedback = 0.0, ""
+    def _critic_local(self, record: AIReadyRecord) -> list[dict]:
+        query = self._build_query(record)
+        context = retriever.format_context(query)
+        prompt = CRITIC_PROMPT.format(context=context, record=record.model_dump_json(indent=2))
+        response = llm.generate(system_prompt=CRITIC_SYSTEM, user_prompt=prompt)
+        return self._parse_json(response).get("issues", [])
 
-    for _ in range(MAX_REFINE_ITERATIONS):
-        context = retrieve(" ".join(record.diagnoses + record.symptoms))
-        score, feedback = critic_fn(record, context)
+    def _critic_claude(self, record: AIReadyRecord) -> list[dict]:
+        import anthropic
+        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        query = self._build_query(record)
+        context = retriever.format_context(query)
+        prompt = CRITIC_PROMPT.format(context=context, record=record.model_dump_json(indent=2))
+        msg = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=1024,
+            system=CRITIC_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return self._parse_json(msg.content[0].text).get("issues", [])
 
-        if score >= QUALITY_THRESHOLD:
-            record.quality_score = score
+    def _refine(self, record: AIReadyRecord, issues: list[dict]) -> AIReadyRecord:
+        prompt = REFINE_PROMPT.format(
+            issues=json.dumps(issues, indent=2),
+            record=record.model_dump_json(indent=2),
+        )
+        response = llm.generate(system_prompt=REFINE_SYSTEM, user_prompt=prompt)
+        corrected = self._parse_json(response)
+        if not corrected:
+            return record
+        try:
+            return AIReadyRecord(**corrected)
+        except Exception:
             return record
 
-        record = _refine(record, feedback)
+    def _build_query(self, record: AIReadyRecord) -> str:
+        parts = [dx.description for dx in record.diagnoses[:3]]
+        parts += [med.name for med in record.medications[:3]]
+        return " ".join(parts) if parts else "medical record validation"
 
-    # 최대 반복 초과 → 사람 검토 플래그
-    record.quality_score = score
-    record.flagged = True
-    return record
+    def _calc_q_index(self, record: AIReadyRecord, issues: list[dict], loops: int) -> float:
+        score = 1.0
+        score -= len(issues) * 0.1
+        score -= (loops - 1) * 0.05
+        if not record.diagnoses:
+            score -= 0.2
+        if not record.medications and not record.observations:
+            score -= 0.1
+        return round(max(0.0, min(1.0, score)), 2)
+
+    def _parse_json(self, response: str) -> dict:
+        match = re.search(r"\{.*\}", response, re.DOTALL)
+        if not match:
+            return {}
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return {}

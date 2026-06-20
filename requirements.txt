@@ -1,13 +1,28 @@
+# LLM
+torch>=2.3.0
+transformers>=4.51.0
+bitsandbytes>=0.43.0
+accelerate>=0.30.0
+einops>=0.8.0
+
+# Workflow
+langgraph>=0.2.0
+langchain>=0.2.0
+langchain-community>=0.2.0
+
+# RAG
+chromadb>=0.5.0
+sentence-transformers>=3.0.0
+
+# Schema
+pydantic>=2.7.0
+
+# Data processing
+pandas>=2.2.0
+
+# Claude API (Synthea Critic)
 anthropic
-langgraph
-langchain
-langchain-anthropic
-chromadb
-sentence-transformers
-pydantic
-pandas
-textstat
-scikit-learn
-transformers
-torch
+
+# Utilities
 python-dotenv
+scikit-learn
