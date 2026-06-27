@@ -184,9 +184,19 @@ class Agent1Parser:
         reason = enc.sort_values("START", ascending=False)["REASONDESCRIPTION"].dropna()
         return str(reason.iloc[0]) if not reason.empty else None
 
+    _SDOH_KEYWORDS = (
+        "[PRAPARE]", "[PhenX]", "status", "insurance", "education",
+        "income", "language", "housing", "refugee", "farm work",
+        "Armed Forces", "Race", "Hispanic", "Address", "employment",
+    )
+
     def _synthea_symptoms(self, observations: pd.DataFrame, pid: str, diagnoses: list[str]) -> list[str]:
         obs = observations[observations["PATIENT"] == pid]
-        symptoms = obs[obs["TYPE"] == "text"]["DESCRIPTION"].dropna().unique().tolist()
+        text_obs = obs[obs["TYPE"] == "text"]["DESCRIPTION"].dropna().unique()
+        symptoms = [
+            d for d in text_obs
+            if not any(k.lower() in d.lower() for k in self._SDOH_KEYWORDS)
+        ]
         if not symptoms and diagnoses:
             raw = llm.generate(
                 system_prompt="Return symptoms as comma-separated list only. No explanation.",
