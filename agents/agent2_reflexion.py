@@ -4,7 +4,7 @@ import re
 from models.model_loader import llm
 from rag.retriever import retriever
 from schemas.ai_ready_schema import AIReadyRecord, QualityMetadata, DataStatus
-from config import MAX_REFLEXION_LOOPS, USE_CLAUDE_API, CLAUDE_MODEL, QUALITY_THRESHOLD
+from config import MAX_REFLEXION_LOOPS, QUALITY_THRESHOLD
 
 CRITIC_SYSTEM = """You are a medical data quality auditor.
 Check the given medical record for errors and return ONLY valid JSON. No explanation."""
@@ -77,24 +77,33 @@ class Agent2Reflexion:
         record_json = record.model_dump_json(indent=2)
         prompt = CRITIC_PROMPT.format(context=context, record=record_json)
 
-        if USE_CLAUDE_API:
-            response = self._call_claude(prompt)
-        else:
-            response = llm.generate(system_prompt=CRITIC_SYSTEM, user_prompt=prompt)
+        critic_schema = {
+            "type": "object",
+            "required": ["issues", "passed"],
+            "properties": {
+                "issues": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "field": {"type": "string"},
+                            "issue": {"type": "string"},
+                            "suggested_fix": {"type": "string"}
+                        }
+                    }
+                },
+                "passed": {"type": "boolean"}
+            }
+        }
+
+        response = llm.generate(
+            system_prompt=CRITIC_SYSTEM,
+            user_prompt=prompt,
+            json_schema=critic_schema   # A파트 완료 후 실제 동작
+        )
 
         parsed = self._parse_json(response)
         return parsed.get("issues", [])
-
-    def _call_claude(self, prompt: str) -> str:
-        import anthropic
-        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        msg = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=1024,
-            system=CRITIC_SYSTEM,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return msg.content[0].text
 
     def _refine(self, record: AIReadyRecord, issues: list[dict]) -> AIReadyRecord:
         issues_str = json.dumps(issues, indent=2)
