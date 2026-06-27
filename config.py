@@ -18,13 +18,14 @@ for d in [RAW_DIR, PMC_DIR, OUTPUT_DIR, CHROMA_DIR, SYNTHEA_CSV_DIR]:
 # Data source: "synthea" | "mimic_iv" | "eicu"
 DATA_SOURCE = "synthea"
 
-# Synthea는 합성 데이터 → Claude API 사용 가능
-# MIMIC-IV / eICU는 PhysioNet DUA → 로컬 모델만
-USE_CLAUDE_API = os.getenv("ANTHROPIC_API_KEY") is not None and DATA_SOURCE == "synthea"
+USE_CLAUDE_API = False
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 
-# Local Model (MIMIC-IV / eICU용)
-MODEL_ID = "Qwen/Qwen3-4B"
+# vLLM 서버 주소 (A팀 설정 후 채워넣기)
+VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8000")
+
+# Local Model
+MODEL_ID = "Qwen/Qwen3-1.7B"
 LOAD_IN_4BIT = True
 DEVICE_MAP = "auto"
 

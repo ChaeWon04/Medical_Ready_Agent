@@ -2,6 +2,7 @@ import json
 import re
 import uuid
 import pandas as pd
+from pathlib import Path
 from typing import Optional
 from models.model_loader import llm
 from schemas.ai_ready_schema import (
@@ -35,11 +36,67 @@ Rules:
 Clinical note:
 {note}"""
 
-ICD9_TO_ICD10 = {
-    "250.00": "E11.9", "250.02": "E11.9", "401.9": "I10",
-    "428.0": "I50.9", "410.90": "I21.9", "490": "J44.1",
-    "493.90": "J45.909", "585.9": "N18.9", "276.1": "E87.1",
-    "486": "J18.9", "414.01": "I25.10", "427.31": "I48.91",
+def _load_icd9_mapping() -> dict:
+    csv_path = Path(__file__).parent.parent / "data" / "icd9to10.csv"
+    if csv_path.exists():
+        df = pd.read_csv(csv_path, dtype=str, header=0)
+        return dict(zip(df.iloc[:, 0].str.strip(), df.iloc[:, 1].str.strip()))
+    # CSV 없을 때 fallback
+    return {
+        "250.00": "E11.9", "250.02": "E11.9", "401.9": "I10",
+        "428.0": "I50.9", "410.90": "I21.9", "490": "J44.1",
+        "493.90": "J45.909", "585.9": "N18.9", "276.1": "E87.1",
+        "486": "J18.9", "414.01": "I25.10", "427.31": "I48.91",
+    }
+
+ICD9_TO_ICD10 = _load_icd9_mapping()
+
+EXTRACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "diagnoses": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "icd10_code": {"type": "string"},
+                    "description": {"type": "string"},
+                    "confidence": {"type": "string", "enum": ["confirmed", "suspected", "ruled_out"]},
+                    "is_negated": {"type": "boolean"},
+                },
+                "required": ["icd10_code", "description", "confidence", "is_negated"],
+            },
+        },
+        "medications": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "dose": {"type": ["number", "null"]},
+                    "unit": {"type": ["string", "null"]},
+                    "route": {"type": ["string", "null"]},
+                    "frequency": {"type": ["string", "null"]},
+                },
+                "required": ["name"],
+            },
+        },
+        "observations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "value": {"type": "string"},
+                    "unit": {"type": ["string", "null"]},
+                    "reference_range": {"type": ["string", "null"]},
+                    "is_abnormal": {"type": ["boolean", "null"]},
+                },
+                "required": ["name", "value"],
+            },
+        },
+    },
+    "required": ["diagnoses", "medications", "observations"],
 }
 
 SNOMED_TO_ICD10 = {
@@ -220,7 +277,7 @@ class Agent1Parser:
     ) -> AIReadyRecord:
         return AIReadyRecord(
             record_id=str(uuid.uuid4()),
-            source="mimic_iv",  # eICU도 ICU 데이터로 통일
+            source="eicu",
             patient_id=patient_stay_id,
             diagnoses=self._eicu_diagnoses(diagnosis_df, patient_stay_id),
             medications=self._eicu_medications(medication_df, patient_stay_id),
@@ -232,7 +289,7 @@ class Agent1Parser:
         extracted = self._extract_with_llm(note_text)
         return AIReadyRecord(
             record_id=str(uuid.uuid4()),
-            source="mimic_iv",
+            source="eicu",
             patient_id=patient_stay_id,
             diagnoses=[Diagnosis(**d) for d in extracted.get("diagnoses", [])],
             medications=[Medication(**m) for m in extracted.get("medications", [])],
@@ -278,7 +335,8 @@ class Agent1Parser:
 
     def _extract_with_llm(self, note_text: str) -> dict:
         prompt = EXTRACT_PROMPT.format(note=note_text[:3000])
-        response = llm.generate(system_prompt=SYSTEM_PROMPT, user_prompt=prompt)
+        # json_schema: A팀이 model_loader.py에 파라미터 추가 후 활성화
+        response = llm.generate(system_prompt=SYSTEM_PROMPT, user_prompt=prompt, json_schema=EXTRACT_SCHEMA)
         return self._parse_json(response)
 
     def _llm_to_icd10(self, description: str) -> Optional[str]:
