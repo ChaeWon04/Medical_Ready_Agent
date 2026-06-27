@@ -31,6 +31,7 @@ Check for:
 3. Negation failures (ruled_out diagnosis marked as confirmed)
 4. Hallucinated values not supported by context
 5. Copy-forward errors (duplicate identical entries)
+6. Empty diagnoses list (flag if diagnoses array is empty)
 
 If no issues found, return {{"issues": [], "passed": true}}"""
 
@@ -67,7 +68,7 @@ class Agent2Reflexion:
             reflexion_loops=loops,
             hallucination_flags=[i.get("issue", "") for i in issues],
             q_index=self._calc_q_index(record, issues, loops),
-            status=DataStatus.AI_READY if not issues else DataStatus.NEEDS_REVIEW,
+            status=DataStatus.AI_READY if (not issues and record.diagnoses) else DataStatus.NEEDS_REVIEW,
         )
         return record
 
