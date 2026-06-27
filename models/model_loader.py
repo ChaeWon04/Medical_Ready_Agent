@@ -1,74 +1,32 @@
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
-from config import MODEL_ID, LOAD_IN_4BIT, DEVICE_MAP, MAX_NEW_TOKENS, TEMPERATURE, ENABLE_THINKING
+from openai import OpenAI
+from config import VLLM_BASE_URL, MODEL_ID, ENABLE_THINKING
 
 
 class ModelLoader:
-    """Qwen3-4B 싱글톤 로더 — 모든 Agent가 같은 인스턴스 사용"""
 
     _instance = None
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
+            base_url = VLLM_BASE_URL if VLLM_BASE_URL.endswith("/v1") else VLLM_BASE_URL + "/v1"
+            cls._instance._client = OpenAI(base_url=base_url, api_key="dummy")
         return cls._instance
 
-    def __init__(self):
-        if self._initialized:
-            return
-        print(f"[ModelLoader] {MODEL_ID} 로딩 중...")
-        self.tokenizer, self.model = self._load()
-        self._initialized = True
-        print("[ModelLoader] 로딩 완료")
+    def generate(self, system_prompt: str, user_prompt: str, json_schema=None) -> str:
+        extra = {"chat_template_kwargs": {"enable_thinking": ENABLE_THINKING}}
+        if json_schema:
+            extra["guided_json"] = json_schema
 
-    def _load(self):
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=LOAD_IN_4BIT,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_use_double_quant=True,
-        ) if LOAD_IN_4BIT else None
-
-        model = AutoModelForCausalLM.from_pretrained(
-            MODEL_ID,
-            quantization_config=bnb_config,
-            device_map=DEVICE_MAP,
-            torch_dtype=torch.float16,
+        response = self._client.chat.completions.create(
+            model=MODEL_ID,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            extra_body=extra,
         )
-        model.eval()
-        return tokenizer, model
-
-    def generate(self, system_prompt: str, user_prompt: str) -> str:
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        text = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=ENABLE_THINKING,  # non-thinking 모드 고정
-        )
-
-        inputs = self.tokenizer(text, return_tensors="pt").to(self.model.device)
-
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=MAX_NEW_TOKENS,
-                temperature=TEMPERATURE,
-                do_sample=TEMPERATURE > 0,
-                pad_token_id=self.tokenizer.eos_token_id,
-            )
-
-        # 입력 토큰 제거 후 디코딩
-        generated = outputs[0][inputs["input_ids"].shape[1]:]
-        return self.tokenizer.decode(generated, skip_special_tokens=True).strip()
+        return response.choices[0].message.content
 
 
-# 전역 인스턴스 — Agent들이 import해서 바로 사용
 llm = ModelLoader()
