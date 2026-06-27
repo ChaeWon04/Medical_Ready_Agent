@@ -103,19 +103,26 @@ def run_eicu(data_dir: Path):
 
 
 def _log(state: dict):
+    import json
+    from config import OUTPUT_DIR
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _write_log(msg):
+        print(msg)
+        with open(OUTPUT_DIR / "run.log", "a", encoding="utf-8") as lf:
+            lf.write(msg + chr(10))
+
     if state.get("error"):
-        print(f"  [ERROR] {state['error']}")
+        _write_log(f"  [ERROR] {state['error']}")
     elif state.get("record"):
         r = state["record"]
         status = r.get("quality", {}).get("status", "?")
         q = r.get("quality", {}).get("q_index", 0)
-        print(f"  [OK] {r.get('record_id', '')[:8]}... | {status} | Q={q:.2f}")
+        _write_log(f"  [OK] {r.get('record_id', '')[:8]}... | {status} | Q={q:.2f}")
 
-        import json
-        from config import OUTPUT_DIR
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(r, default=str, ensure_ascii=False)
         with open(OUTPUT_DIR / "ai_ready.jsonl", "a", encoding="utf-8") as f:
-            f.write(json.dumps(r, default=str, ensure_ascii=False) + "\n")
+            f.write(line + chr(10))
 
 
 if __name__ == "__main__":
