@@ -60,9 +60,11 @@ class Agent3Annotator:
 
         # 데이터 소스 기반 fallback
         if record.source == "mimic_iv":
-            return ClinicalSituation.INPATIENT  # MIMIC-IV는 ICU 데이터
+            return ClinicalSituation.INPATIENT
+        if record.source == "synthea":
+            return ClinicalSituation.OUTPATIENT
 
-        # LLM fallback
+        # LLM fallback (eICU 등)
         return self._llm_situation(record)
 
     def _llm_situation(self, record: AIReadyRecord) -> ClinicalSituation:

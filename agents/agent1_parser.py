@@ -157,7 +157,8 @@ class Agent1Parser:
         results = []
         for _, row in df[df["PATIENT"] == pid].iterrows():
             desc = str(row.get("DESCRIPTION", ""))
-            code = self._llm_to_icd10(desc)
+            snomed = str(row.get("CODE", "")).strip()
+            code = SNOMED_TO_ICD10.get(snomed) or self._llm_to_icd10(desc)
             if code:
                 results.append(Diagnosis(icd10_code=code, description=desc, confidence="confirmed"))
         return results
@@ -169,14 +170,17 @@ class Agent1Parser:
         ]
 
     def _synthea_observations(self, df: pd.DataFrame, pid: str) -> list[Observation]:
+        _EXCLUDE_OBS = {"QALY", "DALY", "QOLS"}
+        sub = df[(df["PATIENT"] == pid) & (df["TYPE"] != "text")]
+        sub = sub[~sub["DESCRIPTION"].isin(_EXCLUDE_OBS)]
+        sub = sub.drop_duplicates(subset=["DESCRIPTION"], keep="last")
         return [
             Observation(
                 name=str(row.get("DESCRIPTION", "")),
                 value=str(row.get("VALUE", "")),
                 unit=str(row.get("UNITS", "")) or None,
             )
-            for _, row in df[df["PATIENT"] == pid].iterrows()
-            if row.get("TYPE") != "text"
+            for _, row in sub.iterrows()
         ]
 
     def _synthea_chief_complaint(self, encounters: pd.DataFrame, pid: str) -> Optional[str]:
@@ -185,8 +189,15 @@ class Agent1Parser:
         return str(reason.iloc[0]) if not reason.empty else None
 
     def _synthea_symptoms(self, observations: pd.DataFrame, pid: str, diagnoses: list[str]) -> list[str]:
+        _EXCLUDE_PREFIX = (
+            "are you", "have you", "do you", "what", "how", "which", "when",
+            "primary insurance", "employment", "education", "housing", "address",
+            "race", "hispanic", "language", "discharged", "farm work", "refugee",
+            "stress level", "tobacco", "pregnancy",
+        )
         obs = observations[observations["PATIENT"] == pid]
-        symptoms = obs[obs["TYPE"] == "text"]["DESCRIPTION"].dropna().unique().tolist()
+        raw = obs[obs["TYPE"] == "text"]["DESCRIPTION"].dropna().unique()
+        symptoms = [d for d in raw if not any(d.lower().startswith(e) for e in _EXCLUDE_PREFIX)]
         if not symptoms and diagnoses:
             raw = llm.generate(
                 system_prompt="Return symptoms as comma-separated list only. No explanation.",
