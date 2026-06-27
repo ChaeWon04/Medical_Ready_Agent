@@ -111,6 +111,12 @@ def _log(state: dict):
         q = r.get("quality", {}).get("q_index", 0)
         print(f"  [OK] {r.get('record_id', '')[:8]}... | {status} | Q={q:.2f}")
 
+        import json
+        from config import OUTPUT_DIR
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        with open(OUTPUT_DIR / "ai_ready.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(r, default=str, ensure_ascii=False) + "\n")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
