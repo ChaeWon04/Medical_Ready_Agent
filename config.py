@@ -25,7 +25,7 @@ CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8000")
 
 # Local Model
-MODEL_ID = "Qwen/Qwen3-1.7B"
+MODEL_ID = "Qwen/Qwen3-4B"
 LOAD_IN_4BIT = True
 DEVICE_MAP = "auto"
 

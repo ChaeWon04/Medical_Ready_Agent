@@ -219,8 +219,13 @@ class Agent2Reflexion:
         return parsed.get("issues", [])
 
     def _refine(self, record: AIReadyRecord, issues: list[dict]) -> AIReadyRecord:
-        issues_str = json.dumps(issues, indent=2)
-        record_json = record.model_dump_json(indent=2)
+        issues_str = json.dumps(issues)
+        refine_input = record.model_dump()
+        refine_input["observations"] = [
+            o for o in refine_input["observations"]
+            if o["name"] in self._OBS_WHITELIST
+        ]
+        record_json = json.dumps(refine_input)
 
         prompt = REFINE_PROMPT.format(issues=issues_str, record=record_json)
         response = llm.generate(
@@ -234,7 +239,9 @@ class Agent2Reflexion:
             return record
 
         try:
-            return AIReadyRecord(**corrected)
+            corrected_record = AIReadyRecord(**corrected)
+            corrected_record.observations = record.observations
+            return corrected_record
         except Exception:
             return record
 
