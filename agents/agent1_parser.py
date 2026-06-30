@@ -37,7 +37,7 @@ Clinical note:
 {note}"""
 
 def _load_icd9_mapping() -> dict:
-    csv_path = Path(__file__).parent.parent / "data" / "icd9to10.csv"
+    csv_path = Path(__file__).parent.parent / "data" / "vocab" / "icd9to10.csv"
     if csv_path.exists():
         df = pd.read_csv(csv_path, dtype=str, header=0)
         return dict(zip(df.iloc[:, 0].str.strip(), df.iloc[:, 1].str.strip()))
@@ -99,11 +99,20 @@ EXTRACT_SCHEMA = {
     "required": ["diagnoses", "medications", "observations"],
 }
 
-SNOMED_TO_ICD10 = {
-    "44054006": "E11.9", "73211009": "E11.9", "38341003": "I10",
-    "22298006": "I21.9", "13645005": "J44.1", "195967001": "J45.909",
-    "40055000": "N18.9", "49436004": "I48.91",
-}
+def _load_snomed_mapping() -> tuple[dict, dict]:
+    csv_path = Path(__file__).parent.parent / "data" / "vocab" / "snomed_to_icd10.csv"
+    if csv_path.exists():
+        df = pd.read_csv(csv_path, dtype=str)
+        code_map = dict(zip(df["snomed_code"].str.strip(), df["icd10_code"].str.strip()))
+        desc_map = dict(zip(df["icd10_code"].str.strip(), df["icd10_description"].str.strip()))
+        return code_map, desc_map
+    return {
+        "44054006": "E11.9", "73211009": "E11.9", "38341003": "I10",
+        "22298006": "I21.9", "13645005": "J44.1", "195967001": "J45.909",
+        "49436004": "I48.91", "66383009": "K05.10", "65363002": "H66.9",
+    }, {}
+
+SNOMED_TO_ICD10, ICD10_DESCRIPTIONS = _load_snomed_mapping()
 
 
 class Agent1Parser:
@@ -129,6 +138,7 @@ class Agent1Parser:
         chief_complaint = self._synthea_chief_complaint(encounters, pid)
         symptoms = self._synthea_symptoms(observations, pid, [d.description for d in diagnoses])
         encounter_type = self._synthea_encounter_type(encounters, pid)
+        encounter_date = self._synthea_encounter_date(encounters, pid)
 
         return AIReadyRecord(
             record_id=str(uuid.uuid4()),
@@ -141,6 +151,7 @@ class Agent1Parser:
             diagnoses=diagnoses,
             medications=meds,
             observations=obs,
+            encounter_date=encounter_date,
             quality=QualityMetadata(reflexion_loops=0, q_index=0.0, status=DataStatus.NEEDS_REVIEW),
         )
 
@@ -156,29 +167,55 @@ class Agent1Parser:
     def _synthea_diagnoses(self, df: pd.DataFrame, pid: str) -> list[Diagnosis]:
         results = []
         for _, row in df[df["PATIENT"] == pid].iterrows():
-            desc = str(row.get("DESCRIPTION", ""))
+            snomed_desc = str(row.get("DESCRIPTION", ""))
             snomed = str(row.get("CODE", "")).strip()
-            code = SNOMED_TO_ICD10.get(snomed) or self._llm_to_icd10(desc)
+            code = SNOMED_TO_ICD10.get(snomed) or self._llm_to_icd10(snomed_desc)
+            # ICD10 표준 명칭이 있으면 사용, 없으면 Synthea SNOMED 설명 유지 (항목 7)
+            desc = ICD10_DESCRIPTIONS.get(code, snomed_desc) if code else snomed_desc
+            stop_val = row.get("STOP")
+            is_active = pd.isna(stop_val) or str(stop_val).strip() in ("", "nan")
+            onset = str(row.get("START", "")).strip() or None
             if code:
-                results.append(Diagnosis(icd10_code=code, description=desc, confidence="confirmed"))
+                results.append(Diagnosis(
+                    icd10_code=code,
+                    description=desc,
+                    confidence="confirmed",
+                    is_active=is_active,
+                    onset_date=onset,
+                ))
         return results
 
     def _synthea_medications(self, df: pd.DataFrame, pid: str) -> list[Medication]:
-        return [
-            Medication(name=str(row.get("DESCRIPTION", "")))
-            for _, row in df[df["PATIENT"] == pid].iterrows()
-        ]
+        sub = df[df["PATIENT"] == pid].copy()
+        if sub.empty:
+            return []
+        sub["_is_active"] = sub["STOP"].isna() | (sub["STOP"].astype(str).str.strip().isin(["", "nan"]))
+        sub = sub.sort_values(["_is_active", "START"], ascending=[False, False])
+        sub = sub.drop_duplicates(subset=["DESCRIPTION"], keep="first")
+        results = []
+        for _, row in sub.iterrows():
+            name = str(row.get("DESCRIPTION", ""))
+            dose, unit = self._parse_dose(name)
+            results.append(Medication(
+                name=name,
+                dose=dose,
+                unit=unit,
+                is_active=bool(row["_is_active"]),
+            ))
+        return results
 
     def _synthea_observations(self, df: pd.DataFrame, pid: str) -> list[Observation]:
         _EXCLUDE_OBS = {"QALY", "DALY", "QOLS"}
         sub = df[(df["PATIENT"] == pid) & (df["TYPE"] != "text")]
         sub = sub[~sub["DESCRIPTION"].isin(_EXCLUDE_OBS)]
+        sub = sub.sort_values("DATE")
         sub = sub.drop_duplicates(subset=["DESCRIPTION"], keep="last")
         return [
             Observation(
                 name=str(row.get("DESCRIPTION", "")),
                 value=str(row.get("VALUE", "")),
                 unit=str(row.get("UNITS", "")) or None,
+                observed_date=str(row.get("DATE", "")) or None,
             )
             for _, row in sub.iterrows()
         ]
@@ -215,6 +252,12 @@ class Agent1Parser:
             )
             symptoms = [s.strip() for s in raw.split(",") if s.strip()]
         return symptoms
+
+    def _synthea_encounter_date(self, encounters: pd.DataFrame, pid: str) -> Optional[str]:
+        enc = encounters[encounters["PATIENT"] == pid]
+        if enc.empty:
+            return None
+        return str(enc.sort_values("START", ascending=False)["START"].iloc[0])
 
     def _synthea_encounter_type(self, encounters: pd.DataFrame, pid: str) -> Optional[str]:
         enc = encounters[encounters["PATIENT"] == pid]

@@ -28,11 +28,14 @@ class Diagnosis(BaseModel):
     description: str
     confidence: Literal["confirmed", "suspected", "ruled_out"]
     is_negated: bool = False  # "r/o DM" 같은 부정 표현 처리
+    is_active: bool = True    # STOP 컬럼 기반: 현재 활성 질환 여부
+    onset_date: Optional[str] = None  # 진단 시작일 (START 컬럼)
 
     @field_validator("icd10_code")
     @classmethod
     def validate_icd10(cls, v: str) -> str:
-        if not re.match(r"^[A-Z][0-9]{2}(\.[0-9A-Z]{1,4})?$", v):
+        # ICD10CM은 3번째 자리가 문자인 최신 코드(I1A, I5A 등)도 유효
+        if not re.match(r"^[A-Z][0-9][0-9A-Z](\.[0-9A-Z]{1,4})?$", v):
             raise ValueError(f"유효하지 않은 ICD-10 코드: {v}")
         return v
 
@@ -43,6 +46,7 @@ class Medication(BaseModel):
     unit: Optional[Literal["g", "mg", "mcg", "mL", "unit"]] = None  # 단위 오인식 방지
     route: Optional[str] = None
     frequency: Optional[str] = None
+    is_active: bool = True  # STOP 컬럼 기반: 현재 복용 중 여부
 
 
 class Observation(BaseModel):
@@ -51,6 +55,7 @@ class Observation(BaseModel):
     unit: Optional[str] = None
     reference_range: Optional[str] = None
     is_abnormal: Optional[bool] = None
+    observed_date: Optional[str] = None  # 측정일 (DATE 컬럼)
 
 
 class ClinicalContext(BaseModel):
@@ -91,6 +96,8 @@ class AIReadyRecord(BaseModel):
 
     # Agent 2 출력
     quality: QualityMetadata
+
+    encounter_date: Optional[str] = None  # 기준 방문일 (가장 최근 encounter START)
 
     # 사람 검토 필요 플래그 (juyoung 브랜치)
     flagged: bool = False
