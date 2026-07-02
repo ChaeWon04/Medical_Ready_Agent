@@ -22,7 +22,7 @@ class ModelLoader:
             cls._instance._client = OpenAI(
                 base_url=VLLM_BASE_URL,
                 api_key="dummy",
-                timeout=120.0,
+                timeout=300.0,
             )
             print(f"[ModelLoader] vLLM 연결 {VLLM_BASE_URL} | model={MODEL_ID}")
         return cls._instance

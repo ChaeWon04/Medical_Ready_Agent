@@ -220,7 +220,7 @@ class Agent2Reflexion:
 
     def _refine(self, record: AIReadyRecord, issues: list[dict]) -> AIReadyRecord:
         issues_str = json.dumps(issues)
-        refine_input = record.model_dump()
+        refine_input = json.loads(record.model_dump_json())
         refine_input["observations"] = [
             o for o in refine_input["observations"]
             if o["name"] in self._OBS_WHITELIST

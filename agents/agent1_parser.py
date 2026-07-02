@@ -419,10 +419,12 @@ class Agent1Parser:
             return f"{raw[:3]}.{raw[3:]}" if len(raw) > 3 and "." not in raw else raw
         return None
 
+    _UNIT_NORM = {"g": "g", "mg": "mg", "mcg": "mcg", "ml": "mL", "unit": "unit"}
+
     def _parse_dose(self, dose_str: str) -> tuple[Optional[float], Optional[str]]:
         match = re.search(r"([\d.]+)\s*(g|mg|mcg|mL|unit)", dose_str, re.IGNORECASE)
         if match:
-            return self._safe_float(match.group(1)), match.group(2).lower()
+            return self._safe_float(match.group(1)), self._UNIT_NORM.get(match.group(2).lower())
         return None, None
 
     def _safe_float(self, val) -> Optional[float]:
