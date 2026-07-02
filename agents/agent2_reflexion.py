@@ -221,7 +221,7 @@ class Agent2Reflexion:
         )
 
         parsed = self._parse_json(response)
-        return parsed.get("issues", [])
+        return self._filter_false_positives(parsed.get("issues", []))
 
     def _refine(self, record: AIReadyRecord, issues: list[dict]) -> AIReadyRecord:
         issues_str = json.dumps(issues)
@@ -249,6 +249,36 @@ class Agent2Reflexion:
             return corrected_record
         except Exception:
             return record
+
+    _SNOMED_FP = (
+        "has a description 'finding'",
+        "has a description 'disorder'",
+        "has a description 'situation'",
+        "has a description 'morphologic",
+        "is not a standard chief complaint",
+        "not a clinical diagnosis",
+        "is redundant",
+    )
+    _UCUM_FP = (
+        "'Cel'", "should be 'Celsius'", "should be '°C'",
+        "'mm[Hg]'", "should be 'mmHg'",
+        "'10*3/uL'", "'10*6/uL'",
+        "should be '10^3", "should be '10^6",
+    )
+    _CORRECT_FP = (" is correct ",)
+
+    def _filter_false_positives(self, issues: list[dict]) -> list[dict]:
+        filtered = []
+        for issue in issues:
+            text = issue.get("issue", "")
+            if any(p in text for p in self._SNOMED_FP):
+                continue
+            if any(p in text for p in self._UCUM_FP):
+                continue
+            if any(p in text for p in self._CORRECT_FP):
+                continue
+            filtered.append(issue)
+        return filtered
 
     def _build_query(self, record: AIReadyRecord) -> str:
         parts = []
