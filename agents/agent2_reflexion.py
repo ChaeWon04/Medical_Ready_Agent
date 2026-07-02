@@ -25,13 +25,18 @@ Return JSON with this format:
 }}
 
 Check for:
-1. ICD-10 code mismatch with description
-2. Medication dose errors (unit mismatch: g vs mg vs mcg)
+1. ICD-10 code clearly mismatched with description (e.g. cardiac code paired with respiratory description)
+2. Medication dose errors (unit mismatch: g vs mg vs mcg, or implausible dose value)
 3. Negation failures (ruled_out diagnosis marked as confirmed)
 4. Hallucinated values not supported by context
-5. Copy-forward errors (duplicate identical entries)
-6. No active diagnoses (is_active=true item must exist)
-7. Non-clinical ICD-10 codes as primary diagnosis (R99, Z00-Z99 as confirmed main diagnosis is an error)
+5. Copy-forward errors: same ICD-10 code AND same onset_date (different dates = separate encounters, NOT duplicates)
+6. No active clinical diagnoses (zero is_active=true items)
+
+Do NOT flag any of the following — they are valid:
+- SNOMED description suffixes: "(finding)", "(disorder)", "(situation)", "(morphologic abnormality)" are standard terminology
+- Standard UCUM units: "Cel", "mm[Hg]", "10*3/uL", "10*6/uL", "g/dL", "kg/m2", "/min", "%", "fL", "pg" are all correct
+- Z-codes (Z00-Z99) that reflect real documented patient conditions
+- Same ICD-10 code appearing with different onset_dates (separate clinical encounters)
 
 If no issues found, return {{"issues": [], "passed": true}}"""
 
