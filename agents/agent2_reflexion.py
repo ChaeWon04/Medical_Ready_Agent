@@ -265,7 +265,8 @@ class Agent2Reflexion:
         "'10*3/uL'", "'10*6/uL'",
         "should be '10^3", "should be '10^6",
     )
-    _CORRECT_FP = (" is correct ",)
+    _CORRECT_FP = (" is correct ", " is valid", "but the chief complaint is")
+    _DUPE_FP = ("same onset_date",)
 
     def _filter_false_positives(self, issues: list[dict]) -> list[dict]:
         filtered = []
@@ -276,6 +277,8 @@ class Agent2Reflexion:
             if any(p in text for p in self._UCUM_FP):
                 continue
             if any(p in text for p in self._CORRECT_FP):
+                continue
+            if any(p in text for p in self._DUPE_FP):
                 continue
             filtered.append(issue)
         return filtered
