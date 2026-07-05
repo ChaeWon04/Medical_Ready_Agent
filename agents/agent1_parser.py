@@ -278,15 +278,49 @@ class Agent1Parser:
         hadm_id: str,
         diagnoses_df: pd.DataFrame,
         prescriptions_df: pd.DataFrame,
+        admissions_df: pd.DataFrame = None,
+        patients_df: pd.DataFrame = None,
+        icd_desc_df: pd.DataFrame = None,
+        labevents_df: pd.DataFrame = None,
     ) -> AIReadyRecord:
-        diagnoses = self._mimic_diagnoses(diagnoses_df, subject_id, hadm_id)
+        if admissions_df is None: admissions_df = pd.DataFrame()
+        if patients_df is None: patients_df = pd.DataFrame()
+        if icd_desc_df is None: icd_desc_df = pd.DataFrame()
+        if labevents_df is None: labevents_df = pd.DataFrame()
+
+        age, gender = None, None
+        if not patients_df.empty:
+            p_rows = patients_df[patients_df["subject_id"].astype(str) == subject_id]
+            if not p_rows.empty:
+                p = p_rows.iloc[0]
+                age = self._safe_int(p.get("anchor_age"))
+                gender = str(p.get("gender", "")).strip() or None
+
+        encounter_date, chief_complaint = None, None
+        if not admissions_df.empty:
+            a_rows = admissions_df[admissions_df["hadm_id"].astype(str) == hadm_id]
+            if not a_rows.empty:
+                a = a_rows.iloc[0]
+                admittime = str(a.get("admittime", "")).strip()
+                encounter_date = admittime[:10] if admittime and admittime.lower() not in ("", "nan") else None
+                cc = str(a.get("diagnosis", "")).strip()
+                chief_complaint = cc if cc and cc.lower() not in ("", "nan", "none") else None
+
+        diagnoses = self._mimic_diagnoses(diagnoses_df, subject_id, hadm_id, icd_desc_df)
         medications = self._mimic_medications(prescriptions_df, subject_id, hadm_id)
+        observations = self._mimic_labevents(labevents_df, hadm_id) if not labevents_df.empty else []
+
         return AIReadyRecord(
             record_id=str(uuid.uuid4()),
             source="mimic_iv",
             patient_id=subject_id,
+            age=age,
+            gender=gender,
+            chief_complaint=chief_complaint,
             diagnoses=diagnoses,
             medications=medications,
+            observations=observations,
+            encounter_date=encounter_date,
             quality=QualityMetadata(reflexion_loops=0, q_index=0.0, status=DataStatus.NEEDS_REVIEW),
         )
 
@@ -303,18 +337,41 @@ class Agent1Parser:
             quality=QualityMetadata(reflexion_loops=0, q_index=0.0, status=DataStatus.NEEDS_REVIEW),
         )
 
-    def _mimic_diagnoses(self, df: pd.DataFrame, subject_id: str, hadm_id: str) -> list[Diagnosis]:
+    def _mimic_diagnoses(self, df: pd.DataFrame, subject_id: str, hadm_id: str,
+                         icd_desc_df: pd.DataFrame = None) -> list[Diagnosis]:
+        if icd_desc_df is None: icd_desc_df = pd.DataFrame()
+        desc_lookup = {}
+        if not icd_desc_df.empty:
+            for _, r in icd_desc_df.iterrows():
+                k = (str(r.get("icd_code", "")).strip(), str(r.get("icd_version", "")).strip())
+                desc_lookup[k] = str(r.get("long_title", "")).strip()
+
         mask = (df["subject_id"].astype(str) == subject_id) & (df["hadm_id"].astype(str) == hadm_id)
         results = []
         for _, row in df[mask].iterrows():
-            raw_code = str(row.get("icd_code", ""))
-            version = str(row.get("icd_version", "10"))
+            raw_code = str(row.get("icd_code", "")).strip()
+            version = str(row.get("icd_version", "10")).strip()
+            desc = desc_lookup.get((raw_code, version), raw_code)
             if version == "9":
-                code = ICD9_TO_ICD10.get(raw_code, self._llm_to_icd10(raw_code))
+                code = ICD9_TO_ICD10.get(raw_code, self._llm_to_icd10(desc))
             else:
                 code = self._format_icd10(raw_code)
             if code:
-                results.append(Diagnosis(icd10_code=code, description=raw_code, confidence="confirmed"))
+                results.append(Diagnosis(icd10_code=code, description=desc, confidence="confirmed"))
+        return results
+
+    def _mimic_labevents(self, df: pd.DataFrame, hadm_id: str) -> list[Observation]:
+        results = []
+        for _, row in df[df["hadm_id"].astype(str) == hadm_id].iterrows():
+            val = str(row.get("value", "")).strip()
+            if not val or val.lower() in ("nan", "none", ""):
+                continue
+            results.append(Observation(
+                name=str(row.get("label", row.get("itemid", ""))).strip(),
+                value=val,
+                unit=str(row.get("valueuom", "")).strip() or None,
+                is_abnormal=str(row.get("flag", "")).lower() == "abnormal" or None,
+            ))
         return results
 
     def _mimic_medications(self, df: pd.DataFrame, subject_id: str, hadm_id: str) -> list[Medication]:
@@ -335,14 +392,32 @@ class Agent1Parser:
     def parse_eicu_structured(
         self,
         patient_stay_id: str,
-        diagnosis_df: pd.DataFrame,
-        medication_df: pd.DataFrame,
-        lab_df: pd.DataFrame,
+        patient_row: dict = None,
+        diagnosis_df: pd.DataFrame = None,
+        medication_df: pd.DataFrame = None,
+        lab_df: pd.DataFrame = None,
     ) -> AIReadyRecord:
+        if patient_row is None: patient_row = {}
+        if diagnosis_df is None: diagnosis_df = pd.DataFrame()
+        if medication_df is None: medication_df = pd.DataFrame()
+        if lab_df is None: lab_df = pd.DataFrame()
+
+        age_raw = str(patient_row.get("age", "")).strip()
+        age = 90 if age_raw.startswith(">") else self._safe_int(age_raw)
+
+        gender_raw = str(patient_row.get("gender", "")).strip().lower()
+        gender = "M" if gender_raw == "male" else ("F" if gender_raw == "female" else None)
+
+        cc = str(patient_row.get("apacheadmissiondx", "")).strip()
+        chief_complaint = cc if cc and cc.lower() not in ("", "nan", "none") else None
+
         return AIReadyRecord(
             record_id=str(uuid.uuid4()),
             source="eicu",
             patient_id=patient_stay_id,
+            age=age,
+            gender=gender,
+            chief_complaint=chief_complaint,
             diagnoses=self._eicu_diagnoses(diagnosis_df, patient_stay_id),
             medications=self._eicu_medications(medication_df, patient_stay_id),
             observations=self._eicu_labs(lab_df, patient_stay_id),
@@ -365,9 +440,16 @@ class Agent1Parser:
     def _eicu_diagnoses(self, df: pd.DataFrame, stay_id: str) -> list[Diagnosis]:
         results = []
         for _, row in df[df["patientunitstayid"].astype(str) == stay_id].iterrows():
-            icd9 = str(row.get("icd9code", ""))
-            desc = str(row.get("diagnosisstring", ""))
-            code = ICD9_TO_ICD10.get(icd9, self._llm_to_icd10(desc))
+            desc = str(row.get("diagnosisstring", "")).strip()
+            icd9_raw = str(row.get("icd9code", "")).strip()
+            codes = [c.strip() for c in icd9_raw.split(",") if c.strip() and c.strip().lower() != "nan"]
+            code = None
+            for c in codes:
+                code = ICD9_TO_ICD10.get(c)
+                if code:
+                    break
+            if not code:
+                code = self._llm_to_icd10(desc) if desc else None
             if code:
                 results.append(Diagnosis(icd10_code=code, description=desc, confidence="confirmed"))
         return results
@@ -430,6 +512,12 @@ class Agent1Parser:
     def _safe_float(self, val) -> Optional[float]:
         try:
             return float(val)
+        except (TypeError, ValueError):
+            return None
+
+    def _safe_int(self, val) -> Optional[int]:
+        try:
+            return int(float(str(val)))
         except (TypeError, ValueError):
             return None
 

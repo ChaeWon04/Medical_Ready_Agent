@@ -48,6 +48,10 @@ def parse_node(state: PipelineState) -> PipelineState:
                     hadm_id=raw["hadm_id"],
                     diagnoses_df=raw["diagnoses_df"],
                     prescriptions_df=raw["prescriptions_df"],
+                    admissions_df=raw.get("admissions_df"),
+                    patients_df=raw.get("patients_df"),
+                    icd_desc_df=raw.get("icd_desc_df"),
+                    labevents_df=raw.get("labevents_df"),
                 )
         elif source == "eicu":
             if "note_text" in raw:
@@ -58,6 +62,7 @@ def parse_node(state: PipelineState) -> PipelineState:
             else:
                 record = agent1.parse_eicu_structured(
                     patient_stay_id=raw["patient_stay_id"],
+                    patient_row=raw.get("patient_row"),
                     diagnosis_df=raw["diagnosis_df"],
                     medication_df=raw["medication_df"],
                     lab_df=raw["lab_df"],

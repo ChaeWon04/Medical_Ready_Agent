@@ -38,21 +38,36 @@ def run_synthea(data_dir: Path):
 
 
 def run_mimic(data_dir: Path, mode: str):
-    hosp_dir = data_dir / "demo" / "hosp"
+    diagnoses_df = pd.read_csv(data_dir / "diagnoses_icd.csv")
+    prescriptions_df = pd.read_csv(data_dir / "prescriptions.csv")
+    admissions_df = pd.read_csv(data_dir / "admissions.csv")
+    patients_df = pd.read_csv(data_dir / "patients.csv")
 
-    diagnoses_df = pd.read_csv(hosp_dir / "diagnoses_icd.csv.gz", compression="gzip")
-    prescriptions_df = pd.read_csv(hosp_dir / "prescriptions.csv.gz", compression="gzip")
-    admissions_df = pd.read_csv(hosp_dir / "admissions.csv.gz", compression="gzip")
+    icd_parts = []
+    for fname in ("d_icd_diagnoses.csv", "d_icd_diagnoses_icd9.csv", "d_icd_diagnoses_icd10.csv"):
+        p = data_dir / fname
+        if p.exists():
+            icd_parts.append(pd.read_csv(p))
+    icd_desc_df = pd.concat(icd_parts, ignore_index=True) if icd_parts else pd.DataFrame()
 
-    print(f"[MIMIC-IV] 입원 {len(admissions_df)}건 처리 시작")
-    for _, row in admissions_df.iterrows():
+    lab_path = data_dir / "labevents.csv"
+    labevents_df = pd.read_csv(lab_path) if lab_path.exists() else pd.DataFrame()
+
+    hadm_ids = admissions_df["hadm_id"].dropna().unique().tolist()
+    print(f"[MIMIC-IV] 입원 {len(hadm_ids)}건 처리 시작")
+    for hadm_id in hadm_ids:
+        a_row = admissions_df[admissions_df["hadm_id"].astype(str) == str(hadm_id)].iloc[0]
         state = pipeline.invoke({
             "source": "mimic_iv",
             "raw_input": {
-                "subject_id": str(row["subject_id"]),
-                "hadm_id": str(row["hadm_id"]),
+                "subject_id": str(a_row["subject_id"]),
+                "hadm_id": str(hadm_id),
                 "diagnoses_df": diagnoses_df,
                 "prescriptions_df": prescriptions_df,
+                "admissions_df": admissions_df,
+                "patients_df": patients_df,
+                "icd_desc_df": icd_desc_df,
+                "labevents_df": labevents_df,
             },
             "record": None,
             "error": None,
@@ -81,7 +96,8 @@ def run_eicu(data_dir: Path):
                 note_text = " ".join(notes["notetext"].dropna().tolist())
                 state = pipeline.invoke({
                     "source": "eicu",
-                    "raw_input": {"note_text": note_text, "patient_stay_id": stay_id},
+                    "raw_input": {"note_text": note_text, "patient_stay_id": stay_id,
+                                  "patient_row": row.to_dict()},
                     "record": None,
                     "error": None,
                 })
@@ -92,6 +108,7 @@ def run_eicu(data_dir: Path):
             "source": "eicu",
             "raw_input": {
                 "patient_stay_id": stay_id,
+                "patient_row": row.to_dict(),
                 "diagnosis_df": diagnosis_df,
                 "medication_df": medication_df,
                 "lab_df": lab_df,
