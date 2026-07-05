@@ -44,7 +44,9 @@ def run_mimic(data_dir: Path, mode: str):
     patients_df = pd.read_csv(data_dir / "patients.csv")
 
     icd_parts = []
-    for fname in ("d_icd_diagnoses.csv", "d_icd_diagnoses_icd9.csv", "d_icd_diagnoses_icd10.csv"):
+    for fname in ("d_icd_diagnoses.csv",
+                  "d_icd_diagnoses_icd9.csv", "d_icd_diagnoses_ICD9.csv",
+                  "d_icd_diagnoses_icd10.csv", "d_icd_diagnoses_ICD10.csv"):
         p = data_dir / fname
         if p.exists():
             icd_parts.append(pd.read_csv(p))
