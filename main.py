@@ -1,17 +1,27 @@
 """
 사용법:
+  python main.py --source mimic_iv --data_dir data/raw/mimic4 --split train --max_records 200
+  python main.py --source mimic_iv --data_dir data/raw/mimic4 --split test
+  python main.py --source eicu --data_dir data/raw/eicu --split train
+  python main.py --source eicu --data_dir data/raw/eicu --split test
   python main.py --source synthea --data_dir data/raw/synthea
-  python main.py --source mimic_iv --data_dir data/raw/mimic4 --mode structured
-  python main.py --source mimic_iv --data_dir data/raw/mimic4 --mode note
-  python main.py --source eicu --data_dir data/raw/eicu
 """
 import argparse
+import json
 import pandas as pd
 from pathlib import Path
 from graph.pipeline import pipeline
+from config import OUTPUT_DIR
 
 
-def run_synthea(data_dir: Path):
+def _load_split_ids(split_csv: Path, id_col: str, split: str) -> set:
+    if not split_csv.exists() or split == "all":
+        return None  # None = 필터 없음
+    df = pd.read_csv(split_csv)
+    return set(df[df["split"] == split][id_col].astype(str).tolist())
+
+
+def run_synthea(data_dir: Path, split: str, max_records: int):
     patients    = pd.read_csv(data_dir / "patients.csv")
     conditions  = pd.read_csv(data_dir / "conditions.csv")
     medications = pd.read_csv(data_dir / "medications.csv")
@@ -19,6 +29,8 @@ def run_synthea(data_dir: Path):
     observations = pd.read_csv(data_dir / "observations.csv")
 
     pids = patients["Id"].tolist()
+    if max_records:
+        pids = pids[:max_records]
     print(f"[Synthea] 환자 {len(pids)}명 처리 시작")
     for pid in pids:
         state = pipeline.invoke({
@@ -34,10 +46,10 @@ def run_synthea(data_dir: Path):
             "record": None,
             "error": None,
         })
-        _log(state)
+        _log(state, split)
 
 
-def run_mimic(data_dir: Path, mode: str):
+def run_mimic(data_dir: Path, mode: str, split: str, max_records: int):
     diagnoses_df = pd.read_csv(data_dir / "diagnoses_icd.csv")
     prescriptions_df = pd.read_csv(data_dir / "prescriptions.csv")
     admissions_df = pd.read_csv(data_dir / "admissions.csv")
@@ -55,8 +67,17 @@ def run_mimic(data_dir: Path, mode: str):
     lab_path = data_dir / "labevents.csv"
     labevents_df = pd.read_csv(lab_path) if lab_path.exists() else pd.DataFrame()
 
+    allowed_ids = _load_split_ids(data_dir / "mimic_split.csv", "hadm_id", split)
+
     hadm_ids = admissions_df["hadm_id"].dropna().unique().tolist()
-    print(f"[MIMIC-IV] 입원 {len(hadm_ids)}건 처리 시작")
+    if allowed_ids is not None:
+        hadm_ids = [h for h in hadm_ids if str(h) in allowed_ids]
+    if split == "train":
+        hadm_ids = hadm_ids[:200]
+    elif max_records:
+        hadm_ids = hadm_ids[:max_records]
+
+    print(f"[MIMIC-IV] 입원 {len(hadm_ids)}건 처리 시작 (split={split})")
     for hadm_id in hadm_ids:
         a_row = admissions_df[admissions_df["hadm_id"].astype(str) == str(hadm_id)].iloc[0]
         state = pipeline.invoke({
@@ -74,24 +95,30 @@ def run_mimic(data_dir: Path, mode: str):
             "record": None,
             "error": None,
         })
-        _log(state)
+        _log(state, split)
 
 
-def run_eicu(data_dir: Path):
+def run_eicu(data_dir: Path, split: str, max_records: int):
     patient_df = pd.read_csv(data_dir / "patient.csv")
     diagnosis_df = pd.read_csv(data_dir / "diagnosis.csv")
     medication_df = pd.read_csv(data_dir / "medication.csv")
     lab_df = pd.read_csv(data_dir / "lab.csv")
 
-    # 노트 파일 있으면 로드
     note_path = data_dir / "note.csv"
     note_df = pd.read_csv(note_path) if note_path.exists() else None
 
-    print(f"[eICU] 환자 {len(patient_df)}건 처리 시작")
-    for _, row in patient_df.iterrows():
+    allowed_ids = _load_split_ids(data_dir / "eicu_split.csv", "patientunitstayid", split)
+
+    rows = list(patient_df.iterrows())
+    if allowed_ids is not None:
+        rows = [(i, r) for i, r in rows if str(r["patientunitstayid"]) in allowed_ids]
+    if max_records:
+        rows = rows[:max_records]
+
+    print(f"[eICU] 환자 {len(rows)}건 처리 시작 (split={split})")
+    for _, row in rows:
         stay_id = str(row["patientunitstayid"])
 
-        # 노트가 있으면 노트 우선
         if note_df is not None:
             notes = note_df[note_df["patientunitstayid"].astype(str) == stay_id]
             if not notes.empty:
@@ -103,7 +130,7 @@ def run_eicu(data_dir: Path):
                     "record": None,
                     "error": None,
                 })
-                _log(state)
+                _log(state, split)
                 continue
 
         state = pipeline.invoke({
@@ -118,18 +145,18 @@ def run_eicu(data_dir: Path):
             "record": None,
             "error": None,
         })
-        _log(state)
+        _log(state, split)
 
 
-def _log(state: dict):
-    import json
-    from config import OUTPUT_DIR
+
+def _log(state: dict, split: str = "all"):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    fname = f"ai_ready_{split}.jsonl" if split != "all" else "ai_ready.jsonl"
 
     def _write_log(msg):
         print(msg)
         with open(OUTPUT_DIR / "run.log", "a", encoding="utf-8") as lf:
-            lf.write(msg + chr(10))
+            lf.write(msg + "\n")
 
     if state.get("error"):
         _write_log(f"  [ERROR] {state['error']}")
@@ -138,23 +165,24 @@ def _log(state: dict):
         status = r.get("quality", {}).get("status", "?")
         q = r.get("quality", {}).get("q_index", 0)
         _write_log(f"  [OK] {r.get('record_id', '')[:8]}... | {status} | Q={q:.2f}")
-
-        line = json.dumps(r, default=str, ensure_ascii=False)
-        with open(OUTPUT_DIR / "ai_ready.jsonl", "a", encoding="utf-8") as f:
-            f.write(line + chr(10))
+        with open(OUTPUT_DIR / fname, "a", encoding="utf-8") as f:
+            f.write(json.dumps(r, default=str, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", choices=["synthea", "mimic_iv", "eicu"], required=True)
     parser.add_argument("--data_dir", type=Path, required=True)
-    parser.add_argument("--mode", choices=["structured", "note"], default="structured",
-                        help="MIMIC-IV 전용: structured(테이블) or note(임상노트)")
+    parser.add_argument("--split", choices=["train", "test", "all"], default="all")
+    parser.add_argument("--max_records", type=int, default=None,
+                        help="최대 처리 레코드 수 (예: MIMIC train 400 중 200만 쓸 때 --max_records 200)")
+    parser.add_argument("--mode", choices=["structured", "note"], default="structured")
     args = parser.parse_args()
 
     if args.source == "synthea":
-        run_synthea(args.data_dir)
+        run_synthea(args.data_dir, args.split, args.max_records)
     elif args.source == "mimic_iv":
-        run_mimic(args.data_dir, args.mode)
+        run_mimic(args.data_dir, args.mode, args.split, args.max_records)
     elif args.source == "eicu":
-        run_eicu(args.data_dir)
+        run_eicu(args.data_dir, args.split, args.max_records)
+
