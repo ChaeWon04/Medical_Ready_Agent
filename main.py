@@ -55,6 +55,12 @@ def run_mimic(data_dir: Path, mode: str):
     lab_path = data_dir / "labevents.csv"
     labevents_df = pd.read_csv(lab_path) if lab_path.exists() else pd.DataFrame()
 
+    split_map = {}
+    split_path = data_dir / "mimic_split.csv"
+    if split_path.exists():
+        split_df = pd.read_csv(split_path)
+        split_map = dict(zip(split_df["hadm_id"].astype(str), split_df["split"]))
+
     hadm_ids = admissions_df["hadm_id"].dropna().unique().tolist()
     print(f"[MIMIC-IV] 입원 {len(hadm_ids)}건 처리 시작")
     for hadm_id in hadm_ids:
@@ -64,6 +70,7 @@ def run_mimic(data_dir: Path, mode: str):
             "raw_input": {
                 "subject_id": str(a_row["subject_id"]),
                 "hadm_id": str(hadm_id),
+                "split": split_map.get(str(hadm_id)),
                 "diagnoses_df": diagnoses_df,
                 "prescriptions_df": prescriptions_df,
                 "admissions_df": admissions_df,
@@ -87,6 +94,12 @@ def run_eicu(data_dir: Path):
     note_path = data_dir / "note.csv"
     note_df = pd.read_csv(note_path) if note_path.exists() else None
 
+    split_map = {}
+    split_path = data_dir / "eicu_split.csv"
+    if split_path.exists():
+        split_df = pd.read_csv(split_path)
+        split_map = dict(zip(split_df["patientunitstayid"].astype(str), split_df["split"]))
+
     print(f"[eICU] 환자 {len(patient_df)}건 처리 시작")
     for _, row in patient_df.iterrows():
         stay_id = str(row["patientunitstayid"])
@@ -99,7 +112,8 @@ def run_eicu(data_dir: Path):
                 state = pipeline.invoke({
                     "source": "eicu",
                     "raw_input": {"note_text": note_text, "patient_stay_id": stay_id,
-                                  "patient_row": row.to_dict()},
+                                  "patient_row": row.to_dict(),
+                                  "split": split_map.get(stay_id)},
                     "record": None,
                     "error": None,
                 })
@@ -111,6 +125,7 @@ def run_eicu(data_dir: Path):
             "raw_input": {
                 "patient_stay_id": stay_id,
                 "patient_row": row.to_dict(),
+                "split": split_map.get(stay_id),
                 "diagnosis_df": diagnosis_df,
                 "medication_df": medication_df,
                 "lab_df": lab_df,

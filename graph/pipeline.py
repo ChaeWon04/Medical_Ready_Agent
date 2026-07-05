@@ -70,6 +70,7 @@ def parse_node(state: PipelineState) -> PipelineState:
         else:
             return {**state, "error": f"알 수 없는 소스: {source}"}
 
+        record.split = raw.get("split")
         return {**state, "record": json.loads(record.model_dump_json()), "error": None}
 
     except Exception as e:
