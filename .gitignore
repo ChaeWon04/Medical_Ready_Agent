@@ -3,6 +3,7 @@ data/raw/mimic4/*
 data/raw/eicu/*
 !data/raw/mimic4/.gitkeep
 !data/raw/eicu/.gitkeep
+data/output/*
 
 # ChromaDB 로컬 빌드
 chroma_db/
