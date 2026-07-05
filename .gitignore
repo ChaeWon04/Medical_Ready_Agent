@@ -1,3 +1,9 @@
+# 임상 데이터 (MIMIC-IV, eICU) - 접근 승인 필요
+data/raw/mimic4/*
+data/raw/eicu/*
+!data/raw/mimic4/.gitkeep
+!data/raw/eicu/.gitkeep
+
 # ChromaDB 로컬 빌드
 chroma_db/
 rag/chroma_db/
