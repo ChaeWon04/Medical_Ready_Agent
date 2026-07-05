@@ -29,6 +29,10 @@ class PMCRetriever:
 
     def retrieve(self, query: str, top_k: int = RAG_TOP_K) -> list[str]:
         """쿼리와 가장 관련 높은 PMC 패시지 반환"""
+        return [text for text, _ in self.retrieve_with_scores(query, top_k)]
+
+    def retrieve_with_scores(self, query: str, top_k: int = RAG_TOP_K) -> list[tuple[str, float]]:
+        """쿼리와 가장 관련 높은 PMC 패시지 + 유사도 점수(코사인, 1에 가까울수록 유사) 반환"""
         if self._collection.count() == 0:
             return []
 
@@ -37,7 +41,9 @@ class PMCRetriever:
             query_embeddings=[embedding],
             n_results=min(top_k, self._collection.count()),
         )
-        return results["documents"][0]  # 텍스트 리스트
+        docs = results["documents"][0]
+        dists = results["distances"][0]
+        return [(doc, round(1 - dist, 3)) for doc, dist in zip(docs, dists)]
 
     def format_context(self, query: str) -> str:
         """Critic 프롬프트에 바로 삽입할 수 있는 컨텍스트 문자열 생성"""

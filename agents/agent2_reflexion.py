@@ -135,15 +135,20 @@ class Agent2Reflexion:
         history = []  # (record, issues, loop_num)
 
         for loop in range(MAX_REFLEXION_LOOPS):
+            print(f"\n[Agent2] Loop {loop + 1}/{MAX_REFLEXION_LOOPS} 시작 (record_id={record.record_id[:8]})")
             issues = self._critic(record)
             history.append((record, issues, loop + 1))
 
             if not issues:
+                print(f"[Agent2] Loop {loop + 1}: 문제 없음 -> 종료")
                 break
 
-            if self._calc_q_index(record, issues, loop + 1) >= QUALITY_THRESHOLD:
+            q_index = self._calc_q_index(record, issues, loop + 1)
+            if q_index >= QUALITY_THRESHOLD:
+                print(f"[Agent2] Loop {loop + 1}: Q-index {q_index} >= 임계값 {QUALITY_THRESHOLD} -> 종료")
                 break
 
+            print(f"[Agent2] Loop {loop + 1}: {len(issues)}건 문제 발견 -> Refine 실행")
             record = self._refine(record, issues)
 
         best_record, best_issues, best_loops = min(history, key=lambda x: len(x[1]))
@@ -191,7 +196,17 @@ class Agent2Reflexion:
 
     def _critic(self, record: AIReadyRecord) -> list[dict]:
         query = self._build_query(record)
-        context = retriever.format_context(query)
+        passages = retriever.retrieve_with_scores(query)
+        context = self._format_context(passages)
+
+        print(f"  [RAG] 검색어: {query}")
+        if passages:
+            for i, (text, score) in enumerate(passages, 1):
+                snippet = text[:100].replace("\n", " ")
+                print(f"  [RAG] 근거 {i} (유사도 {score}): {snippet}...")
+        else:
+            print("  [RAG] 검색된 근거 없음")
+
         slim = json.dumps(self._slim_record(record), indent=2)
         prompt = CRITIC_PROMPT.format(context=context, record=slim)
 
@@ -221,7 +236,21 @@ class Agent2Reflexion:
         )
 
         parsed = self._parse_json(response)
-        return self._filter_false_positives(parsed.get("issues", []))
+        filtered = self._filter_false_positives(parsed.get("issues", []))
+
+        if filtered:
+            print(f"  [Critic] 판정: {len(filtered)}건 문제 발견")
+        else:
+            print("  [Critic] 판정: 문제 없음")
+
+        return filtered
+
+    def _format_context(self, passages: list[tuple[str, float]]) -> str:
+        if not passages:
+            return "No reference context available."
+        return "\n\n".join(
+            f"[Reference {i+1}]\n{text}" for i, (text, _) in enumerate(passages)
+        )
 
     def _refine(self, record: AIReadyRecord, issues: list[dict]) -> AIReadyRecord:
         issues_str = json.dumps(issues)
