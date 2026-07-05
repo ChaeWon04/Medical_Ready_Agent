@@ -98,7 +98,6 @@ class AIReadyRecord(BaseModel):
     quality: QualityMetadata
 
     encounter_date: Optional[str] = None  # 기준 방문일 (가장 최근 encounter START)
-    split: Optional[Literal["train", "test"]] = None  # train/test 구분
 
     # 사람 검토 필요 플래그 (juyoung 브랜치)
     flagged: bool = False
