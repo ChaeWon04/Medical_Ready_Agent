@@ -463,6 +463,12 @@ class Agent1Parser:
         cc = str(patient_row.get("apacheadmissiondx", "")).strip()
         chief_complaint = cc if cc and cc.lower() not in ("", "nan", "none") else None
 
+        diagnoses = self._eicu_diagnoses(diagnosis_df, patient_stay_id)
+
+        # apacheadmissiondx가 결측치인 경우, 주진단(diagnosispriority=Primary, 없으면 순위상 첫 항목)으로 대체
+        if not chief_complaint and diagnoses:
+            chief_complaint = diagnoses[0].description
+
         return AIReadyRecord(
             record_id=str(uuid.uuid4()),
             source="eicu",
@@ -470,7 +476,7 @@ class Agent1Parser:
             age=age,
             gender=gender,
             chief_complaint=chief_complaint,
-            diagnoses=self._eicu_diagnoses(diagnosis_df, patient_stay_id),
+            diagnoses=diagnoses,
             medications=self._eicu_medications(medication_df, patient_stay_id),
             observations=self._eicu_labs(lab_df, patient_stay_id),
             quality=QualityMetadata(reflexion_loops=0, q_index=0.0, status=DataStatus.NEEDS_REVIEW),
@@ -489,9 +495,18 @@ class Agent1Parser:
             quality=QualityMetadata(reflexion_loops=0, q_index=0.0, status=DataStatus.NEEDS_REVIEW),
         )
 
+    _EICU_PRIORITY_ORDER = {"primary": 0, "major": 1, "other": 2}
+
     def _eicu_diagnoses(self, df: pd.DataFrame, stay_id: str) -> list[Diagnosis]:
+        sub = df[df["patientunitstayid"].astype(str) == stay_id]
+        if "diagnosispriority" in sub.columns:
+            # Primary가 항상 첫 항목이 되도록 정렬 (apacheadmissiondx 결측 시 chief_complaint 대체용)
+            prio = sub["diagnosispriority"].astype(str).str.lower().map(self._EICU_PRIORITY_ORDER).fillna(99)
+            sub = sub.assign(_prio=prio).sort_values("_prio")
+
         results = []
-        for _, row in df[df["patientunitstayid"].astype(str) == stay_id].iterrows():
+        seen = set()
+        for _, row in sub.iterrows():
             # diagnosisstring은 eICU 자체 분류체계라 "system|category|specific" 형태의
             # 파이프 구분 문자열임. 최상위 신체계통 분류(첫 조각)만 빼고 나머지를 이어붙여서
             # 사람이 읽을 수 있는 설명으로 만듦.
@@ -508,6 +523,13 @@ class Agent1Parser:
             if not code:
                 code = self._llm_to_icd10(desc) if desc else None
             if code:
+                # eICU diagnosis 테이블엔 같은 진단이 여러 시점에 재기록되어 완전히 동일한
+                # (code, desc) 행이 반복되는 경우가 흔함(시간 컬럼이 이 추출본엔 없어서 구분 불가).
+                # 다른 시점 기록이어도 코드/설명이 완전히 같으면 정보 손실 없이 중복만 제거.
+                key = (code, desc)
+                if key in seen:
+                    continue
+                seen.add(key)
                 results.append(Diagnosis(icd10_code=code, description=desc, confidence="confirmed"))
         return results
 
