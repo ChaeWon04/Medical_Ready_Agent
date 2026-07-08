@@ -1,126 +1,133 @@
 # Medical_Ready_Agent
 
-의료 원본 데이터(Synthea / MIMIC-IV / eICU)를 LLM 기반 3단계 에이전트 파이프라인에 통과시켜,
-구조화·검수·주석까지 끝난 "AI-Ready" 레코드(JSONL)로 변환하는 프로젝트입니다.
+우리는 의료 원본 데이터(Synthea / MIMIC-IV / eICU)를 LLM 멀티에이전트 파이프라인에 통과시켜,
+구조화 → 팩트체크/자기수정 → 임상 컨텍스트 주석까지 끝낸 **"AI-Ready" 레코드**를 만든다.
+학습·평가에 바로 쓸 수 있는 정제된 의료 데이터셋 확보가 목표다.
 
-## 아키텍처
+## 파이프라인
 
-`graph/pipeline.py`가 LangGraph로 아래 3개 노드를 순서대로 실행합니다.
+```mermaid
+flowchart TD
+    A1["Synthea<br/>(합성 데이터, 디버깅용)"] --> P
+    A2["MIMIC-IV<br/>(train 200 · test 50)"] --> P
+    A3["eICU<br/>(train 200 · test 50)"] --> P
 
-1. **Agent1 Parser** (`agents/agent1_parser.py`) — 소스별 원본 테이블/노트를 파싱해 `AIReadyRecord`로 변환
-2. **Agent2 Reflexion** (`agents/agent2_reflexion.py`) — RAG(PMC 논문) 근거를 참고해 Critic이 문제를 찾고, 필요하면 Refine으로 재작성. `config.MAX_REFLEXION_LOOPS`(기본 3회)까지 반복하며 `q_index`가 `config.QUALITY_THRESHOLD`(기본 0.8) 이상이면 즉시 종료
-3. **Agent3 Annotator** (`agents/agent3_annotator.py`) — 임상 상황/역할/접근성 점수 등 컨텍스트 주석 부여
+    P["<b>Agent1 · Parser</b><br/>소스별 원본 파싱 → AIReadyRecord"] --> C
 
-출력 스키마는 `schemas/ai_ready_schema.py`의 `AIReadyRecord`를 따르며, 판정 기준 코드(NR1~)는
-`agents/criteria.py`에 정의되어 있습니다.
+    subgraph Reflexion["Agent2 · Reflexion (최대 3 loop)"]
+        direction TB
+        C["Critic<br/>PMC 논문 RAG 근거 대조 → issues 탐지"] --> Q{"issues 없음 or<br/>Q-index ≥ 0.8 ?"}
+        Q -- No --> F["Refine<br/>issues 기반 레코드 재작성"] --> C
+        Q -- Yes --> E1["루프 종료"]
+    end
 
-실제 LLM 추론은 `main.py` 프로세스 안에서 도는 게 아니라, 별도로 띄운 **vLLM 서버**에 OpenAI 호환
-API로 요청을 보내는 구조입니다 (`models/model_loader.py`).
+    E1 --> RULE["규칙 기반 최종 감사<br/>NR1 · NR2 · NR4 · NR7"]
+    RULE --> ANN["<b>Agent3 · Annotator</b><br/>임상 상황 · 역할 · 접근성 점수 부여"]
+    ANN --> OUT[["AI-Ready JSONL<br/>data/output/ai_ready_*.jsonl"]]
 
-## 환경 설정
-
-```bash
-git clone https://github.com/ChaeWon04/Medical_Ready_Agent.git
-cd Medical_Ready_Agent
-pip install -r requirements.txt
-pip install vllm
+    VLLM(["vLLM 서버<br/>Qwen/Qwen3-4B"])
+    VLLM -.호출.-> P
+    VLLM -.호출.-> C
+    VLLM -.호출.-> F
+    VLLM -.호출.-> ANN
 ```
 
-GPU 인스턴스를 새로 띄울 때 드라이버/CUDA 버전이 안 맞으면 아래 compat 패키지를 설치합니다
-(인스턴스마다 매번 필요할 수 있음, 경로는 `dpkg -L cuda-compat-13-0`로 재확인):
+## 데이터 & 실험 설계
 
-```bash
-wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
-sudo dpkg -i cuda-keyring_1.1-1_all.deb
-sudo apt-get update
-sudo apt-get install -y cuda-compat-13-0
+| 소스 | 용도 | train | test |
+|---|---|---|---|
+| Synthea | 초기 디버깅 (합성 데이터라 규제 없음) | - | - |
+| MIMIC-IV | 본 실험 | 200건 | 50건 |
+| eICU | 본 실험 | 200건 | 50건 |
 
-echo 'export LD_LIBRARY_PATH=/usr/local/cuda-13.0/compat:$LD_LIBRARY_PATH' >> ~/.bashrc
-source ~/.bashrc
-```
+Synthea로 파이프라인 로직 자체를 먼저 검증하고, 그다음 실제 임상 데이터인 MIMIC-IV·eICU에
+같은 파이프라인을 적용해 결과를 비교한다. 두 소스 모두 구조화 테이블(진단/처방/검사)과
+자유 텍스트 노트(discharge summary 등) 두 경로를 지원하도록 구현했고, `graph/pipeline.py`에서
+`note_text` 유무로 분기한다 (`agent1.parse_*_structured` vs `agent1.parse_*_note`).
 
-### vLLM 서버 실행 (터미널 하나 계속 띄워둠)
+## 모델
 
-```bash
-vllm serve Qwen/Qwen3-4B --port 8000 --dtype auto
-```
+생성은 전부 **Qwen/Qwen3-4B**로 수행한다. 파이프라인 프로세스 자체는 모델을 들고 있지 않고,
+별도로 띄운 **vLLM 서버**에 OpenAI 호환 API로 요청만 보내는 구조로 만들었다 (`models/model_loader.py`).
+재현성을 우선해 `ENABLE_THINKING=False`(non-thinking 모드 고정), `MAX_NEW_TOKENS=2048`,
+`TEMPERATURE=0.1`로 고정했다.
 
-`config.py`의 `MODEL_ID`(`Qwen/Qwen3-4B`)와 반드시 같은 모델을 서빙해야 합니다.
+## Multi-Agent 구조
 
-### 정상 작동 확인 (새 터미널)
+### Agent1 · Parser (`agents/agent1_parser.py`)
+소스별 원본 테이블/노트를 파싱해 공통 스키마(`schemas/ai_ready_schema.py`의 `AIReadyRecord`)로
+변환한다. ICD-10 코드 형식 검증, 약물 단위 정규화(UCUM/RxNorm 화이트리스트), STOP 컬럼 기반
+`is_active` 판정을 이 단계에서 규칙 기반으로 처리한다.
 
-```bash
-curl http://localhost:8000/v1/models
-```
+### Agent2 · Reflexion (`agents/agent2_reflexion.py`)
+- **Critic**: `rag/retriever.py`로 PMC 논문에서 관련 근거를 검색해 컨텍스트로 주고, Critic LLM이
+  약물 용량 오류·negation 오류·근거와의 모순 등을 찾아 `issues` 리스트로 반환한다.
+- **Refine**: issues가 있으면 그걸 기반으로 레코드를 재작성한다.
+- 이 과정을 issues가 없어지거나 `q_index >= QUALITY_THRESHOLD`(0.8)가 될 때까지 최대
+  `MAX_REFLEXION_LOOPS`(3)회 반복하고, 그중 issue가 가장 적은 버전을 최종으로 채택한다.
+- 채택된 레코드에는 규칙 기반 최종 감사(NR1/NR2/NR4/NR7)를 한 번 더 돌린다. 이 결과는 refine
+  대상으로 넘기지 않고 사유 코드 기록에만 쓴다 — 빈 값을 LLM이 억지로 채우게 하면
+  hallucination만 늘어나기 때문에 의도적으로 분리했다.
 
-## 파이프라인 실행
+### Agent3 · Annotator (`agents/agent3_annotator.py`)
+임상 상황(외래/응급/입원), 관련 역할(의사/환자/보호자), 가독성·정보 접근성 점수 등
+`ClinicalContext`를 부여한다.
 
-```bash
-export VLLM_BASE_URL=http://localhost:8000/v1   # config.py 기본값과 동일, 명시적으로 설정 권장
+## Critic 판정 기준 (NR 코드)
 
-# Synthea (합성 데이터, git에 샘플 포함됨)
-python main.py --source synthea --data_dir data/raw/synthea
+`agents/criteria.py`에 golden-standard 판정 기준을 코드로 정의해뒀다. `check_type`은 판정 주체를
+뜻한다 (`rule`=결정론적 파이썬 체크, `llm`=Critic LLM 판단, `gate`=별도 로직 결과에 라벨만 부여,
+`upstream`=더 앞단에서 이미 차단).
 
-# MIMIC-IV
-python main.py --source mimic_iv --data_dir data/raw/mimic4 --split train --max_records 200
-python main.py --source mimic_iv --data_dir data/raw/mimic4 --split test
+| 코드 | 카테고리 | check_type | 설명 |
+|---|---|---|---|
+| NR1 | 데이터 공백 | rule | 필수 key의 value가 비어있거나 필드 자체 누락 |
+| NR2 | 의료 정보 누락 | rule | 필드는 있으나 `Unknown`/`None` 등 플레이스홀더 값 |
+| NR3 | 임상 데이터 부재 | gate | 주호소·증상이 파이프라인 최소 규격 미달로 비어있음 |
+| NR4 | 인코딩/텍스트 깨짐 | rule | mojibake, 이상 특수문자 |
+| NR5 | 문맥/논리 해석 불가 | llm | 임상적 선후관계 붕괴, negation 포함 구조적 불일치 |
+| NR6 | 시스템/파싱 오류 | upstream | JSON 문법 오류·truncation (parse 단계에서 error로 이미 차단) |
+| NR7 | 개인정보 노출 | rule | 연구원 실명·병원 코드·로컬 경로 등 파이프라인이 새로 흘린 정보 (현장 데이터 대비용 안전망) |
+| NR8 | Reflexion Critic 검출 | gate | Critic LLM이 찾은 임상/구조적 모순 전체의 catch-all 라벨 |
+| NR9 | 활성 진단 없음 | gate | `is_active=true` 진단이 0개 |
+| NR10 | 코드-설명 불일치 | upstream | ICD 코드와 description 불일치 (파싱 단계에서 공식 크로스워크로 이미 차단) |
+| NR11 | 약물 단위 오류 | llm | 투약 용량 단위 혼용(g/mg/mcg) 또는 비정상 수치 |
 
-# eICU
-python main.py --source eicu --data_dir data/raw/eicu --split train
-python main.py --source eicu --data_dir data/raw/eicu --split test
-```
+## 평가지표 (Q-index)
 
-- `--source`는 `synthea` / `mimic_iv` / `eicu` 셋 중 하나만 허용됩니다 (`mimic`은 오류).
-- Linux는 대소문자를 구분하므로 `--data_dir` 경로와 실제 폴더명의 대소문자가 정확히 일치해야 합니다.
-- 결과는 `data/output/ai_ready_<split>.jsonl`과 `data/output/run.log`에 누적 기록됩니다.
-
-### 소스별 필요 파일
-
-| source | `--data_dir` | 필요 파일 |
-|---|---|---|
-| synthea | `data/raw/synthea` | `patients.csv`, `conditions.csv`, `medications.csv`, `encounters.csv`, `observations.csv` |
-| mimic_iv | `data/raw/mimic4` | `admissions.csv`, `patients.csv`, `diagnoses_icd.csv`, `prescriptions.csv`, `d_icd_diagnoses_ICD9.csv`/`_ICD10.csv`, (선택) `labevents.csv`, (선택) `mimic_split.csv` |
-| eicu | `data/raw/eicu` | `patient.csv`, `diagnosis.csv`, `medication.csv`, `lab.csv`, (선택) `note.csv`, (선택) `eicu_split.csv` |
-
-## MIMIC-IV / eICU 데이터 취급 주의
-
-`data/raw/mimic4/*`, `data/raw/eicu/*`는 `.gitignore`로 막혀 있어 **git에 올라가지 않습니다**.
-PhysioNet 자격 인증(credentialed access)이 필요한 규제 데이터이므로:
-
-- 팀원 각자 본인 명의로 credentialed access를 받아 개별적으로 원본을 내려받아야 합니다.
-- 원본이든 이 파이프라인이 만든 파생 결과물(JSONL)이든, 일반 개인 클라우드 드라이브 등 비보안
-  경로로 공유하지 않습니다. 소속 기관이 승인한 보안 스토리지 또는 통제된 서버 안에서만 공유합니다.
-
-## RAG (PMC 논문 기반 팩트체크)
-
-Agent2 Critic이 참고하는 PMC 벡터DB는 `rag/retriever.py`가 `config.CHROMA_DIR`
-(`rag/chroma_db/`) + 컬렉션명 `pmc_medical`을 읽습니다. 이 DB가 비어 있어도 파이프라인은
-에러 없이 "근거 없음"으로 처리하고 계속 진행합니다.
-
-```bash
-python data/collect_pmc.py      # NCBI PMC OA 벌크 데이터에서 논문 샘플링 → ./pmc_xml_selected/
-python rag/build_vectordb.py    # XML 파싱·청킹·임베딩 → rag/pmc_vectordb/ (컬렉션명 pmc_corpus)
-```
-
-> ⚠️ **알려진 이슈**: 위 두 스크립트가 실제로 쓰는 경로/컬렉션명이 서로, 그리고
-> `rag/retriever.py`가 읽는 경로(`rag/chroma_db/`, `pmc_medical`)와도 일치하지 않습니다.
-> 즉 위 명령을 그대로 실행해도 Agent2가 실제로 참조하는 벡터DB에는 반영되지 않습니다.
-> 지금은 `rag/pmc_vectordb.zip`(사전 빌드된 결과물)을 압축 해제해 `rag/chroma_db/`
-> 위치·컬렉션명에 맞게 수동으로 옮기는 임시 방편이 필요하며, 근본적으로는 세 파일의
-> 경로/컬렉션명을 통일하는 코드 수정이 필요합니다.
-
-## 품질 지표 (Q-index)
-
-`agents/agent2_reflexion.py`의 `_calc_q_index()`가 계산하는 규칙 기반 점수입니다.
+`agents/agent2_reflexion.py`의 `_calc_q_index()`로 계산하는 자체 품질 점수다.
 
 - 1.0에서 시작
-- Critic이 찾은 issue 1개당 -0.1
-- 리플렉션 루프 1회 초과분마다 -0.05
-- 활성 진단(active diagnosis)이 하나도 없으면 -0.2
-- 투약·검사 관측치가 둘 다 없으면 -0.1
-- 주호소·증상이 둘 다 없으면 -0.1
+- Critic이 찾은 issue 1개당 **-0.1**
+- 리플렉션 루프 1회 초과분마다 **-0.05**
+- 활성 진단이 하나도 없으면 **-0.2**
+- 투약·검사 관측치가 둘 다 없으면 **-0.1**
+- 주호소·증상이 둘 다 없으면 **-0.1**
 - 0~1 사이로 clamp
 
-`config.QUALITY_THRESHOLD`(기본 0.8) 이상이면 해당 루프에서 통과 처리됩니다. 사람 라벨링
-검증셋과의 상관관계가 아직 확인되지 않은 휴리스틱이므로, 절대적인 정확도 지표로 간주하지
-않는 것을 권장합니다.
+최종 `status`는 issues가 전혀 없고, 활성 진단이 있고, 주호소/증상 중 하나라도 있어야
+`AI_READY`, 그렇지 않으면 `NEEDS_REVIEW`로 기록한다 (`DataStatus`, `schemas/ai_ready_schema.py`).
+사람 라벨링 검증셋과의 상관관계는 아직 검증하지 못한 휴리스틱이라, 절대적인 정확도 지표가
+아니라 루프 내 상대적 품질 신호로만 쓰고 있다.
+
+## RAG (PMC 논문 근거)
+
+`rag/pmc_vectordb.zip`(사전 빌드한 PMC 250편 임베딩, 저장소에 포함)을 `rag/retriever.py`가
+최초 실행 시 자동으로 압축 해제해서 쓴다 — 별도 빌드 없이 바로 동작하게 만들었다. 코퍼스를
+새로 만들거나 확장할 때는:
+
+```bash
+python data/collect_pmc.py      # NCBI PMC OA 벌크 데이터에서 논문 샘플링
+python rag/build_vectordb.py    # XML 파싱·청킹·임베딩 → rag/pmc_vectordb/
+```
+
+`collect_pmc.py`는 실행한 위치 기준 `./pmc_xml_selected`에 결과를 저장하고,
+`build_vectordb.py`는 `rag/pmc_xml_selected`를 읽는다. 두 경로가 서로 다르니 코퍼스를 새로
+만들 때는 `rag/` 안에서 `collect_pmc.py`를 실행하거나 결과 폴더를 옮겨서 맞춰야 한다.
+
+## MIMIC-IV / eICU 데이터 취급
+
+`data/raw/mimic4/*`, `data/raw/eicu/*`는 `.gitignore`로 막아 git에 올리지 않는다.
+PhysioNet credentialed access가 필요한 규제 데이터라서, 팀원 각자 본인 명의로 접근 승인을
+받아 개별적으로 원본을 받는다. 원본이든 파생 결과물(JSONL)이든 일반 개인 클라우드 드라이브
+등 비보안 경로로는 공유하지 않는다.
