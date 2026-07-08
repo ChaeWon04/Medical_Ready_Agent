@@ -2,8 +2,8 @@
 사용법:
   python main.py --source mimic_iv --data_dir data/raw/mimic4 --split train --max_records 200
   python main.py --source mimic_iv --data_dir data/raw/mimic4 --split test
-  python main.py --source eicu --data_dir data/raw/eicu --split train
-  python main.py --source eicu --data_dir data/raw/eicu --split test
+  python main.py --source eicu --data_dir data/raw/eICU --split train
+  python main.py --source eicu --data_dir data/raw/eICU --split test
   python main.py --source synthea --data_dir data/raw/synthea
 """
 import argparse
@@ -110,7 +110,7 @@ def run_mimic(data_dir: Path, mode: str, split: str, max_records: int):
 
 
 def run_eicu(data_dir: Path, split: str, max_records: int):
-    patient_df = pd.read_csv(data_dir / "patient.csv")
+    patient_df = pd.read_csv(data_dir / "patients.csv")
     diagnosis_df = pd.read_csv(data_dir / "diagnosis.csv")
     medication_df = pd.read_csv(data_dir / "medication.csv")
     lab_df = pd.read_csv(data_dir / "lab.csv")
