@@ -347,6 +347,14 @@ class Agent1Parser:
         medications = self._mimic_medications(prescriptions_df, subject_id, hadm_id)
         observations = self._mimic_labevents(labevents_df, hadm_id) if not labevents_df.empty else []
 
+        # MIMIC-IV admissions엔 자유텍스트 diagnosis 컬럼이 없음(MIMIC-III에만 있던 필드).
+        # 없으면 주진단(seq_num=1, diagnoses[0])을 chief_complaint 대리값으로 사용.
+        if not chief_complaint and diagnoses:
+            chief_complaint = diagnoses[0].description
+
+        # ICD-10 R00-R99는 "증상, 징후 및 이상 임상/검사 소견" 챕터 - 공식적으로 증상 코드임
+        symptoms = [d.description for d in diagnoses if d.icd10_code and d.icd10_code[0] == "R"]
+
         return AIReadyRecord(
             record_id=str(uuid.uuid4()),
             source="mimic_iv",
@@ -354,6 +362,7 @@ class Agent1Parser:
             age=age,
             gender=gender,
             chief_complaint=chief_complaint,
+            symptoms=symptoms,
             diagnoses=diagnoses,
             medications=medications,
             observations=observations,
@@ -384,8 +393,11 @@ class Agent1Parser:
                 desc_lookup[k] = str(r.get("long_title", "")).strip()
 
         mask = (df["subject_id"].astype(str) == subject_id) & (df["hadm_id"].astype(str) == hadm_id)
+        sub = df[mask]
+        if "seq_num" in sub.columns:
+            sub = sub.sort_values("seq_num")  # seq_num=1(주진단)이 항상 첫 항목이 되도록
         results = []
-        for _, row in df[mask].iterrows():
+        for _, row in sub.iterrows():
             raw_code = str(row.get("icd_code", "")).strip()
             version = str(row.get("icd_version", "10")).strip()
             desc = desc_lookup.get((raw_code, version), raw_code)

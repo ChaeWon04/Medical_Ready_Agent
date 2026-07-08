@@ -34,8 +34,13 @@ Return JSON with this format:
 The reference context only covers a few of this patient's conditions — it is background reading, not a checklist.
 A diagnosis/medication/observation that is simply not mentioned in the context is NOT an error by itself.
 
+This record comes from MIMIC-IV prescription order data, which is an administration log, not a curated
+medication list. The SAME drug name legitimately appears multiple times with different doses/times/routes
+(e.g. dose titration, scheduled redosing, PRN doses). Do NOT flag repeated medication names as duplicates
+or errors — only flag a medication entry if its OWN dose/unit is individually implausible or malformed.
+
 Check for:
-1. Medication dose errors (unit mismatch: g vs mg vs mcg, or implausible dose value)
+1. Medication dose errors (unit mismatch: g vs mg vs mcg, or implausible dose value) — evaluate each entry independently
 2. Negation failures (ruled_out diagnosis marked as confirmed)
 3. Values that directly CONTRADICT the reference context (e.g. context states a fact and the record states the opposite) — do NOT flag something merely because the context is silent about it
 4. Copy-forward errors: same ICD-10 code AND same onset_date (different dates = separate encounters, NOT duplicates)
@@ -49,6 +54,11 @@ Do NOT flag any of the following — they are valid:
 - Z-codes (Z00-Z99) that reflect real documented patient conditions
 - Same ICD-10 code appearing with different onset_dates (separate clinical encounters)
 - Any diagnosis, medication, or observation that the reference context simply doesn't mention
+- The same medication name appearing multiple times (this is expected administration-log behavior, not a duplicate)
+
+Reminder before you answer: "not mentioned in context" and "repeated medication name" are NEVER by themselves
+reasons to add an entry to "issues". Only include an issue if you can point to a concrete, self-contained
+error in the record.
 
 If no issues found, return {{"issues": [], "passed": true}}"""
 
@@ -300,9 +310,25 @@ class Agent2Reflexion:
         try:
             corrected_record = AIReadyRecord(**corrected)
             corrected_record.observations = record.observations
+            corrected_record.diagnoses = self._lock_diagnosis_codes(record.diagnoses, corrected_record.diagnoses)
             return corrected_record
         except Exception:
             return record
+
+    def _lock_diagnosis_codes(self, original: list, corrected: list) -> list:
+        """icd10_code/description은 파싱 단계에서 공식 크로스워크로 이미 검증된 값이라
+        refine이 절대 못 건드리게 원본으로 되돌림. is_active/is_negated/confidence 같은
+        판단이 필요한 필드만 refine 결과를 그대로 씀 (negation failures 등은 정상적으로 고쳐짐).
+        refine이 리스트 개수/순서를 바꿔버리면(코드/설명을 index로 매칭할 수 없는 상태) 안전하게
+        원본 diagnoses 전체를 그대로 반환."""
+        if len(original) != len(corrected):
+            return original
+        locked = []
+        for orig_dx, new_dx in zip(original, corrected):
+            new_dx.icd10_code = orig_dx.icd10_code
+            new_dx.description = orig_dx.description
+            locked.append(new_dx)
+        return locked
 
     _SNOMED_FP = (
         "has a description 'finding'",
@@ -321,11 +347,19 @@ class Agent2Reflexion:
     )
     _CORRECT_FP = (" is correct ", " is valid", "but the chief complaint is")
     _DUPE_FP = ("same onset_date",)
+    # 모델이 스스로 "문제 아님"이라고 결론 내려놓고도 issues 리스트엔 넣는 자기모순 패턴
+    # (소문자로 비교해서 대소문자 표기 흔들림 방지)
+    _SELF_CONTRADICT_FP = (
+        "not an error", "not an issue", "no mismatch found", "no error found",
+        "which is plausible", "which matches the description", "which is valid",
+        "which is correct", "which is expected", "this is not incorrect",
+    )
 
     def _filter_false_positives(self, issues: list[dict]) -> list[dict]:
         filtered = []
         for issue in issues:
             text = issue.get("issue", "")
+            text_lower = text.lower()
             if any(p in text for p in self._SNOMED_FP):
                 continue
             if any(p in text for p in self._UCUM_FP):
@@ -333,6 +367,8 @@ class Agent2Reflexion:
             if any(p in text for p in self._CORRECT_FP):
                 continue
             if any(p in text for p in self._DUPE_FP):
+                continue
+            if any(p in text_lower for p in self._SELF_CONTRADICT_FP):
                 continue
             filtered.append(issue)
         return filtered
