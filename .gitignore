@@ -5,9 +5,10 @@ data/raw/eICU/*
 !data/raw/eICU/.gitkeep
 data/output/*
 
-# ChromaDB 로컬 빌드
+# ChromaDB 로컬 빌드 (zip은 git에 커밋, 압축 해제 결과물만 무시 - 코드가 자동 압축해제함)
 chroma_db/
 rag/chroma_db/
+rag/pmc_vectordb/
 
 # 환경변수
 .env

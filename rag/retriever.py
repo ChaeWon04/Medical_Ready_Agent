@@ -1,6 +1,19 @@
+import zipfile
 import chromadb
 from sentence_transformers import SentenceTransformer
 from config import CHROMA_DIR, EMBED_MODEL_ID, CHROMA_COLLECTION, RAG_TOP_K
+
+_VECTORDB_ZIP = CHROMA_DIR.parent / "pmc_vectordb.zip"
+
+
+def _ensure_vectordb_extracted():
+    if CHROMA_DIR.exists() and any(CHROMA_DIR.iterdir()):
+        return
+    if not _VECTORDB_ZIP.exists():
+        return
+    print(f"[Retriever] {_VECTORDB_ZIP.name} 압축 해제 중...")
+    with zipfile.ZipFile(_VECTORDB_ZIP) as zf:
+        zf.extractall(CHROMA_DIR.parent)
 
 
 class PMCRetriever:
@@ -18,6 +31,7 @@ class PMCRetriever:
         if self._initialized:
             return
         print(f"[Retriever] ChromaDB 연결 중...")
+        _ensure_vectordb_extracted()
         self._client = chromadb.PersistentClient(path=str(CHROMA_DIR))
         self._collection = self._client.get_or_create_collection(
             name=CHROMA_COLLECTION,
