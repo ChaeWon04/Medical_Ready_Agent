@@ -13,7 +13,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from graph.pipeline import pipeline
-from config import OUTPUT_DIR
+from config import OUTPUT_DIR, RUN_LOG
 
 _SOURCE_SHORT = {"synthea": "synthea", "mimic_iv": "mimic", "eicu": "eicu"}
 _KST = ZoneInfo("Asia/Seoul")
@@ -167,7 +167,7 @@ def _log(state: dict, source: str, run_ts: str):
 
     def _write_log(msg):
         print(msg)
-        with open(OUTPUT_DIR / "run.log", "a", encoding="utf-8") as lf:
+        with open(RUN_LOG, "a", encoding="utf-8") as lf:
             lf.write(msg + "\n")
 
     if state.get("error"):

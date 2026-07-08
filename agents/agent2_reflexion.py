@@ -3,12 +3,12 @@ import re
 from models.model_loader import llm
 from rag.retriever import retriever
 from schemas.ai_ready_schema import AIReadyRecord, QualityMetadata, DataStatus
-from config import MAX_REFLEXION_LOOPS, QUALITY_THRESHOLD, OUTPUT_DIR
+from config import MAX_REFLEXION_LOOPS, QUALITY_THRESHOLD, RUN_LOG
 
 
 def _log(msg: str):
     print(msg)
-    with open(OUTPUT_DIR / "run.log", "a", encoding="utf-8") as f:
+    with open(RUN_LOG, "a", encoding="utf-8") as f:
         f.write(msg + "\n")
 
 CRITIC_SYSTEM = """You are a medical data quality auditor.
@@ -205,7 +205,7 @@ class Agent2Reflexion:
         passages = retriever.retrieve_with_scores(query)
         context = self._format_context(passages)
 
-        _log(f"  [RAG] 검색어: {query}")
+        _log(f"  [RAG] 검색 실행 ({len(passages)}건 근거 조회)")
         if passages:
             for i, (text, score) in enumerate(passages, 1):
                 snippet = text[:100].replace("\n", " ")

@@ -1,4 +1,6 @@
 from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import os
 
 # Paths
@@ -7,6 +9,9 @@ DATA_DIR = BASE_DIR / "data"
 RAW_DIR = DATA_DIR / "raw"
 OUTPUT_DIR = DATA_DIR / "output"
 CHROMA_DIR = BASE_DIR / "rag" / "pmc_vectordb"
+
+# 실행(프로세스) 전체가 공유하는 로그 파일명 - 한 번 돌리면 그 안의 모든 레코드가 이 파일 하나에 누적됨
+RUN_LOG = OUTPUT_DIR / ("run.log_" + datetime.now(ZoneInfo("Asia/Seoul")).strftime("%m%d_%H%M"))
 
 # Synthea CSV 경로 (juyoung 브랜치 호환)
 SYNTHEA_CSV_DIR = DATA_DIR / "synthea" / "synthea_sample_data_csv_latest"
@@ -31,7 +36,7 @@ TEMPERATURE = 0.1
 ENABLE_THINKING = False  # non-thinking 모드 고정
 
 # RAG
-EMBED_MODEL_ID = "NeuML/pubmedbert-base-embeddings"
+EMBED_MODEL_ID = "pritamdeka/S-PubMedBert-MS-MARCO"  # rag/build_vectordb.py 임베딩 모델과 동일해야 함
 RAG_TOP_K = 5
 CHROMA_COLLECTION = "pmc_corpus"
 
