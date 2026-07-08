@@ -492,7 +492,12 @@ class Agent1Parser:
     def _eicu_diagnoses(self, df: pd.DataFrame, stay_id: str) -> list[Diagnosis]:
         results = []
         for _, row in df[df["patientunitstayid"].astype(str) == stay_id].iterrows():
-            desc = str(row.get("diagnosisstring", "")).strip()
+            # diagnosisstring은 eICU 자체 분류체계라 "system|category|specific" 형태의
+            # 파이프 구분 문자열임. 최상위 신체계통 분류(첫 조각)만 빼고 나머지를 이어붙여서
+            # 사람이 읽을 수 있는 설명으로 만듦.
+            raw_desc = str(row.get("diagnosisstring", "")).strip()
+            parts = [p.strip() for p in raw_desc.split("|") if p.strip()]
+            desc = ", ".join(parts[1:]) if len(parts) > 1 else raw_desc
             icd9_raw = str(row.get("icd9code", "")).strip()
             codes = [c.strip() for c in icd9_raw.split(",") if c.strip() and c.strip().lower() != "nan"]
             code = None
@@ -506,13 +511,30 @@ class Agent1Parser:
                 results.append(Diagnosis(icd10_code=code, description=desc, confidence="confirmed"))
         return results
 
+    # eICU dosage가 가끔 "20 7"처럼 "용량 단위코드" 숫자쌍으로만 들어있음(단위가 텍스트로 안 남고
+    # 내부 코드로 export된 것으로 보임). drugname에 스스로 용량이 적힌 행들로 역추적해서 확인한
+    # 코드만 매핑 - 확신 없는 코드(8, 10021 등)는 억지로 추측하지 않고 그대로 null 둠.
+    _EICU_DOSAGE_CODE_UNIT = {"1": "mL", "3": "mg", "4": "g", "7": "mEq"}
+
+    def _parse_eicu_dosage(self, dosage_str: str) -> tuple[Optional[float], Optional[str]]:
+        m = re.match(r"^([\d.]+)\s+(\d+)$", dosage_str.strip())
+        if m:
+            amount, code = m.group(1), m.group(2)
+            unit = self._EICU_DOSAGE_CODE_UNIT.get(code)
+            if unit:
+                return self._safe_float(amount), normalize_unit(unit)
+        return self._parse_dose(dosage_str)
+
     def _eicu_medications(self, df: pd.DataFrame, stay_id: str) -> list[Medication]:
         results = []
         for _, row in df[df["patientunitstayid"].astype(str) == stay_id].iterrows():
+            drugname = row.get("drugname")
+            if pd.isna(drugname) or not str(drugname).strip():
+                continue  # drugname 결측치를 "nan" 문자열로 저장하지 않고 그냥 건너뜀
             dose_str = str(row.get("dosage", ""))
-            dose, unit = self._parse_dose(dose_str)
+            dose, unit = self._parse_eicu_dosage(dose_str)
             results.append(Medication(
-                name=str(row.get("drugname", "")),
+                name=str(drugname).strip(),
                 dose=dose,
                 unit=unit,
                 route=str(row.get("routeadmin", "")) or None,
