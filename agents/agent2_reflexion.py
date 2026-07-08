@@ -3,6 +3,7 @@ import re
 from models.model_loader import llm
 from rag.retriever import retriever
 from schemas.ai_ready_schema import AIReadyRecord, QualityMetadata, DataStatus
+from agents.criteria import run_rule_checks
 from config import MAX_REFLEXION_LOOPS, QUALITY_THRESHOLD, RUN_LOG
 
 
@@ -30,19 +31,24 @@ Return JSON with this format:
   "passed": true
 }}
 
+The reference context only covers a few of this patient's conditions — it is background reading, not a checklist.
+A diagnosis/medication/observation that is simply not mentioned in the context is NOT an error by itself.
+
 Check for:
-1. ICD-10 code clearly mismatched with description (e.g. cardiac code paired with respiratory description)
-2. Medication dose errors (unit mismatch: g vs mg vs mcg, or implausible dose value)
-3. Negation failures (ruled_out diagnosis marked as confirmed)
-4. Hallucinated values not supported by context
-5. Copy-forward errors: same ICD-10 code AND same onset_date (different dates = separate encounters, NOT duplicates)
-6. No active clinical diagnoses (zero is_active=true items)
+1. Medication dose errors (unit mismatch: g vs mg vs mcg, or implausible dose value)
+2. Negation failures (ruled_out diagnosis marked as confirmed)
+3. Values that directly CONTRADICT the reference context (e.g. context states a fact and the record states the opposite) — do NOT flag something merely because the context is silent about it
+4. Copy-forward errors: same ICD-10 code AND same onset_date (different dates = separate encounters, NOT duplicates)
+5. No active clinical diagnoses (zero is_active=true items)
+
+Do NOT check ICD-10 code-vs-description matching — that is already validated deterministically upstream against the official ICD-10 crosswalk and is out of scope here.
 
 Do NOT flag any of the following — they are valid:
 - SNOMED description suffixes: "(finding)", "(disorder)", "(situation)", "(morphologic abnormality)" are standard terminology
 - Standard UCUM units: "Cel", "mm[Hg]", "10*3/uL", "10*6/uL", "g/dL", "kg/m2", "/min", "%", "fL", "pg" are all correct
 - Z-codes (Z00-Z99) that reflect real documented patient conditions
 - Same ICD-10 code appearing with different onset_dates (separate clinical encounters)
+- Any diagnosis, medication, or observation that the reference context simply doesn't mention
 
 If no issues found, return {{"issues": [], "passed": true}}"""
 
@@ -140,9 +146,19 @@ class Agent2Reflexion:
     def run(self, record: AIReadyRecord) -> AIReadyRecord:
         history = []  # (record, issues, loop_num)
 
+        passages = self._retrieve_context(record)
+        context = self._format_context(passages)
+        _log(f"\n[Agent2] record_id={record.record_id[:8]} - [RAG] 검색 실행 ({len(passages)}건 근거 조회)")
+        if passages:
+            for i, (text, score) in enumerate(passages, 1):
+                snippet = text[:100].replace("\n", " ")
+                _log(f"  [RAG] 근거 {i} (유사도 {score}): {snippet}...")
+        else:
+            _log("  [RAG] 검색된 근거 없음")
+
         for loop in range(MAX_REFLEXION_LOOPS):
-            _log(f"\n[Agent2] Loop {loop + 1}/{MAX_REFLEXION_LOOPS} 시작 (record_id={record.record_id[:8]})")
-            issues = self._critic(record)
+            _log(f"[Agent2] Loop {loop + 1}/{MAX_REFLEXION_LOOPS} 시작 (record_id={record.record_id[:8]})")
+            issues = self._critic(record, context)
             history.append((record, issues, loop + 1))
 
             if not issues:
@@ -159,16 +175,31 @@ class Agent2Reflexion:
 
         best_record, best_issues, best_loops = min(history, key=lambda x: len(x[1]))
 
+        # 최종 규칙 기반 감사 (NR1/NR2/NR4/NR7) - refine 루프엔 안 넣음.
+        # 이유: 정말 데이터가 비어있는 걸 LLM이 "고치려고" 하면 값을 지어내서 hallucination만 늘어남.
+        # 그래서 loop 다 끝난 best_record에 대해서만 감사하고, 결과는 issue 카운트/사유 코드에만 반영.
+        rule_issues = run_rule_checks(best_record)
+        all_issues = best_issues + rule_issues
+
         active_dx = [d for d in best_record.diagnoses if d.is_active]
         has_context = bool(best_record.chief_complaint or best_record.symptoms)
 
+        reason_codes = sorted({i.get("code", "") for i in rule_issues if i.get("code")})
+        if best_issues:
+            reason_codes.append("NR8")
+        if not active_dx:
+            reason_codes.append("NR9")
+        if not has_context:
+            reason_codes.append("NR3")
+
         best_record.quality = QualityMetadata(
             reflexion_loops=best_loops,
-            hallucination_flags=[i.get("issue", "") for i in best_issues],
-            q_index=self._calc_q_index(best_record, best_issues, best_loops),
+            hallucination_flags=[i.get("issue", "") for i in all_issues],
+            reason_codes=reason_codes,
+            q_index=self._calc_q_index(best_record, all_issues, best_loops),
             status=(
                 DataStatus.AI_READY
-                if (not best_issues and active_dx and has_context)
+                if (not all_issues and active_dx and has_context)
                 else DataStatus.NEEDS_REVIEW
             ),
         )
@@ -200,19 +231,7 @@ class Agent2Reflexion:
             ],
         }
 
-    def _critic(self, record: AIReadyRecord) -> list[dict]:
-        query = self._build_query(record)
-        passages = retriever.retrieve_with_scores(query)
-        context = self._format_context(passages)
-
-        _log(f"  [RAG] 검색 실행 ({len(passages)}건 근거 조회)")
-        if passages:
-            for i, (text, score) in enumerate(passages, 1):
-                snippet = text[:100].replace("\n", " ")
-                _log(f"  [RAG] 근거 {i} (유사도 {score}): {snippet}...")
-        else:
-            _log("  [RAG] 검색된 근거 없음")
-
+    def _critic(self, record: AIReadyRecord, context: str) -> list[dict]:
         slim = json.dumps(self._slim_record(record), indent=2)
         prompt = CRITIC_PROMPT.format(context=context, record=slim)
 
@@ -325,6 +344,22 @@ class Agent2Reflexion:
         for med in record.medications[:3]:
             parts.append(med.name)
         return " ".join(parts) if parts else "medical record validation"
+
+    def _retrieve_context(self, record: AIReadyRecord, per_query_k: int = 2,
+                           max_passages: int = 10) -> list[tuple[str, float]]:
+        """진단마다 개별 검색해서 근거 커버리지를 넓힘 (상위 3개짜리 통합 쿼리 하나로는
+        진단이 많은 레코드의 나머지 진단들이 근거 없이 critic한테 넘어가는 문제가 있었음)"""
+        dx_descriptions = [dx.description for dx in record.diagnoses if dx.description][:10]
+        queries = dx_descriptions if dx_descriptions else [self._build_query(record)]
+
+        best_by_text: dict[str, float] = {}
+        for q in queries:
+            for text, score in retriever.retrieve_with_scores(q, top_k=per_query_k):
+                if text not in best_by_text or score > best_by_text[text]:
+                    best_by_text[text] = score
+
+        ranked = sorted(best_by_text.items(), key=lambda x: x[1], reverse=True)
+        return ranked[:max_passages]
 
     def _calc_q_index(self, record: AIReadyRecord, issues: list[dict], loops: int) -> float:
         score = 1.0

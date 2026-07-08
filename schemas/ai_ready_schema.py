@@ -43,7 +43,9 @@ class Diagnosis(BaseModel):
 class Medication(BaseModel):
     name: str
     dose: Optional[float] = None
-    unit: Optional[Literal["g", "mg", "mcg", "mL", "unit"]] = None  # 단위 오인식 방지
+    # 단위 화이트리스트는 agents/agent1_parser.py의 UNIT_CANONICAL/normalize_unit()에서 강제됨
+    # (계량 단위는 UCUM, 제형은 RxNorm Dose Form 기준으로 검증된 값만 통과, 그 외는 파싱 단계에서 None)
+    unit: Optional[str] = None
     route: Optional[str] = None
     frequency: Optional[str] = None
     is_active: bool = True  # STOP 컬럼 기반: 현재 복용 중 여부
@@ -69,6 +71,7 @@ class QualityMetadata(BaseModel):
     """Agent 2 Reflexion 루프 결과"""
     reflexion_loops: int = Field(ge=0, le=3)
     hallucination_flags: List[str] = []  # 감지된 오류 목록
+    reason_codes: List[str] = []  # golden standard 사유 코드 (NR1, NR8 등) - agents/criteria.py 참고
     q_index: float = Field(ge=0.0, le=1.0)  # 품질 지수
     status: DataStatus
 

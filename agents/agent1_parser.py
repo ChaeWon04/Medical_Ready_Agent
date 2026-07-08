@@ -10,6 +10,43 @@ from schemas.ai_ready_schema import (
     QualityMetadata, DataStatus
 )
 
+# 약물 dose 단위 정규화 표. key는 전부 소문자로 비교(대소문자 무시), value가 최종 저장되는 정규 표기.
+# 1) 계량 단위 - UCUM(data/vocab/Athena.zip) 기준으로 확인된 것들
+# 2) 제형 단위 - RxNorm Dose Form(TTY=DF, rxnav.nlm.nih.gov) 기준으로 확인된 것들
+# 3) 포장/개수 단위 - 표준 어휘엔 없지만 흔한 영어 단어라 mg/mcg류와 헷갈릴 위험이 없어 그대로 인정
+UNIT_CANONICAL = {
+    # 1) 계량 단위 (UCUM)
+    "g": "g", "gm": "g",
+    "mg": "mg",
+    "mcg": "mcg",
+    "ml": "mL",
+    "unit": "unit", "units": "unit",
+    "meq": "mEq",
+    "mmol": "mmol",
+    "l": "L",
+    "%": "%",
+    "iu": "IU",
+    "mu": "MU", "million units": "MU",
+    # 2) 제형 단위 (RxNorm Dose Form)
+    "tab": "TAB", "cap": "CAP", "puff": "PUFF", "spry": "SPRY", "ptch": "PTCH",
+    "inh": "INH", "supp": "SUPP", "syr": "SYR", "loz": "LOZ", "waf": "WAF",
+    # 3) 포장/개수 단위 (오인식 위험 없어 표준 어휘 없이 그대로 인정)
+    "vial": "VIAL", "drop": "DROP", "gtt": "gtt", "amp": "AMP", "pkt": "PKT",
+    "tube": "TUBE", "stck": "STCK", "neb": "NEB", "bag": "BAG", "cadd": "CADD",
+    "dose": "dose", "enema": "Enema", "film": "FILM", "troc": "TROC",
+    "crea": "CREA", "appl": "Appl",
+    # 속도/복합 표기 (드묾, 원본 그대로 인정)
+    "mcg/hr": "mcg/hr", "mcg/h": "mcg/hr", "mg/hr": "mg/hr", "mg/day": "mg/day",
+    "ml/hr": "mL/hr", "mcg/kg/min": "mcg/kg/min", "mg pe": "mg PE",
+}
+
+
+def normalize_unit(raw) -> Optional[str]:
+    if not raw:
+        return None
+    return UNIT_CANONICAL.get(str(raw).strip().lower())
+
+
 SYSTEM_PROMPT = """You are a medical data extraction assistant.
 Extract structured information from clinical text and return ONLY valid JSON. No explanation, no markdown."""
 
@@ -354,6 +391,10 @@ class Agent1Parser:
             desc = desc_lookup.get((raw_code, version), raw_code)
             if version == "9":
                 code = ICD9_TO_ICD10.get(raw_code, self._llm_to_icd10(desc))
+                # ICD-9 -> ICD-10 변환 시 desc는 원래 ICD-9 설명 그대로라 코드-설명이 안 맞을 수 있음.
+                # 바뀐 ICD-10 코드 기준으로 공식 설명을 다시 찾아서 맞춰줌.
+                # desc_lookup의 키는 dot 없는 raw 포맷(d_icd_diagnoses_ICD10.csv)이라 맞춰서 비교
+                desc = desc_lookup.get((code.replace(".", ""), "10"), desc) if code else desc
             else:
                 code = self._format_icd10(raw_code)
             if code:
@@ -378,11 +419,10 @@ class Agent1Parser:
         mask = (df["subject_id"].astype(str) == subject_id) & (df["hadm_id"].astype(str) == hadm_id)
         results = []
         for _, row in df[mask].iterrows():
-            unit = str(row.get("dose_unit_rx", ""))
             results.append(Medication(
                 name=str(row.get("drug", "")),
                 dose=self._safe_float(row.get("dose_val_rx")),
-                unit=unit if unit in ("g", "mg", "mcg", "mL", "unit") else None,
+                unit=normalize_unit(row.get("dose_unit_rx")),
                 route=str(row.get("route", "")) or None,
             ))
         return results
@@ -501,12 +541,15 @@ class Agent1Parser:
             return f"{raw[:3]}.{raw[3:]}" if len(raw) > 3 and "." not in raw else raw
         return None
 
-    _UNIT_NORM = {"g": "g", "mg": "mg", "mcg": "mcg", "ml": "mL", "unit": "unit"}
+    # 긴 토큰(mcg/hr 등)이 짧은 토큰(mcg)보다 먼저 매칭되도록 길이 내림차순 정렬
+    _UNIT_TOKEN_PATTERN = "|".join(
+        re.escape(k) for k in sorted(UNIT_CANONICAL.keys(), key=len, reverse=True)
+    )
 
     def _parse_dose(self, dose_str: str) -> tuple[Optional[float], Optional[str]]:
-        match = re.search(r"([\d.]+)\s*(g|mg|mcg|mL|unit)", dose_str, re.IGNORECASE)
+        match = re.search(rf"([\d.]+)\s*({self._UNIT_TOKEN_PATTERN})", dose_str, re.IGNORECASE)
         if match:
-            return self._safe_float(match.group(1)), self._UNIT_NORM.get(match.group(2).lower())
+            return self._safe_float(match.group(1)), normalize_unit(match.group(2))
         return None, None
 
     def _safe_float(self, val) -> Optional[float]:
