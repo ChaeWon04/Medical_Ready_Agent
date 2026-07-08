@@ -3,7 +3,13 @@ import re
 from models.model_loader import llm
 from rag.retriever import retriever
 from schemas.ai_ready_schema import AIReadyRecord, QualityMetadata, DataStatus
-from config import MAX_REFLEXION_LOOPS, QUALITY_THRESHOLD
+from config import MAX_REFLEXION_LOOPS, QUALITY_THRESHOLD, OUTPUT_DIR
+
+
+def _log(msg: str):
+    print(msg)
+    with open(OUTPUT_DIR / "run.log", "a", encoding="utf-8") as f:
+        f.write(msg + "\n")
 
 CRITIC_SYSTEM = """You are a medical data quality auditor.
 Check the given medical record for errors and return ONLY valid JSON. No explanation."""
@@ -135,20 +141,20 @@ class Agent2Reflexion:
         history = []  # (record, issues, loop_num)
 
         for loop in range(MAX_REFLEXION_LOOPS):
-            print(f"\n[Agent2] Loop {loop + 1}/{MAX_REFLEXION_LOOPS} 시작 (record_id={record.record_id[:8]})")
+            _log(f"\n[Agent2] Loop {loop + 1}/{MAX_REFLEXION_LOOPS} 시작 (record_id={record.record_id[:8]})")
             issues = self._critic(record)
             history.append((record, issues, loop + 1))
 
             if not issues:
-                print(f"[Agent2] Loop {loop + 1}: 문제 없음 -> 종료")
+                _log(f"[Agent2] Loop {loop + 1}: 문제 없음 -> 종료")
                 break
 
             q_index = self._calc_q_index(record, issues, loop + 1)
             if q_index >= QUALITY_THRESHOLD:
-                print(f"[Agent2] Loop {loop + 1}: Q-index {q_index} >= 임계값 {QUALITY_THRESHOLD} -> 종료")
+                _log(f"[Agent2] Loop {loop + 1}: Q-index {q_index} >= 임계값 {QUALITY_THRESHOLD} -> 종료")
                 break
 
-            print(f"[Agent2] Loop {loop + 1}: {len(issues)}건 문제 발견 -> Refine 실행")
+            _log(f"[Agent2] Loop {loop + 1}: {len(issues)}건 문제 발견 -> Refine 실행")
             record = self._refine(record, issues)
 
         best_record, best_issues, best_loops = min(history, key=lambda x: len(x[1]))
@@ -199,13 +205,13 @@ class Agent2Reflexion:
         passages = retriever.retrieve_with_scores(query)
         context = self._format_context(passages)
 
-        print(f"  [RAG] 검색어: {query}")
+        _log(f"  [RAG] 검색어: {query}")
         if passages:
             for i, (text, score) in enumerate(passages, 1):
                 snippet = text[:100].replace("\n", " ")
-                print(f"  [RAG] 근거 {i} (유사도 {score}): {snippet}...")
+                _log(f"  [RAG] 근거 {i} (유사도 {score}): {snippet}...")
         else:
-            print("  [RAG] 검색된 근거 없음")
+            _log("  [RAG] 검색된 근거 없음")
 
         slim = json.dumps(self._slim_record(record), indent=2)
         prompt = CRITIC_PROMPT.format(context=context, record=slim)
@@ -239,9 +245,9 @@ class Agent2Reflexion:
         filtered = self._filter_false_positives(parsed.get("issues", []))
 
         if filtered:
-            print(f"  [Critic] 판정: {len(filtered)}건 문제 발견")
+            _log(f"  [Critic] 판정: {len(filtered)}건 문제 발견")
         else:
-            print("  [Critic] 판정: 문제 없음")
+            _log("  [Critic] 판정: 문제 없음")
 
         return filtered
 

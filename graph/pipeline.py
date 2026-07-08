@@ -5,8 +5,6 @@ from agents.agent2_reflexion import Agent2Reflexion
 from agents.agent3_annotator import Agent3Annotator
 from schemas.ai_ready_schema import AIReadyRecord
 import json
-from pathlib import Path
-from config import OUTPUT_DIR
 
 
 class PipelineState(TypedDict):
@@ -98,19 +96,6 @@ def annotate_node(state: PipelineState) -> PipelineState:
         return {**state, "error": str(e)}
 
 
-def save_node(state: PipelineState) -> PipelineState:
-    if state.get("error") or not state.get("record"):
-        return state
-    try:
-        record_dict = state["record"]
-        record_id = record_dict.get("record_id", "unknown")
-        out_path = OUTPUT_DIR / f"{record_id}.json"
-        out_path.write_text(json.dumps(record_dict, indent=2, ensure_ascii=False))
-    except Exception as e:
-        return {**state, "error": str(e)}
-    return state
-
-
 def should_continue(state: PipelineState) -> str:
     return "end" if state.get("error") else "continue"
 
@@ -121,13 +106,11 @@ def build_pipeline():
     graph.add_node("parse", parse_node)
     graph.add_node("reflexion", reflexion_node)
     graph.add_node("annotate", annotate_node)
-    graph.add_node("save", save_node)
 
     graph.set_entry_point("parse")
     graph.add_conditional_edges("parse", should_continue, {"continue": "reflexion", "end": END})
     graph.add_conditional_edges("reflexion", should_continue, {"continue": "annotate", "end": END})
-    graph.add_conditional_edges("annotate", should_continue, {"continue": "save", "end": END})
-    graph.add_edge("save", END)
+    graph.add_edge("annotate", END)
 
     return graph.compile()
 

@@ -9,9 +9,12 @@
 import argparse
 import json
 import pandas as pd
+from datetime import datetime
 from pathlib import Path
 from graph.pipeline import pipeline
 from config import OUTPUT_DIR
+
+_SOURCE_SHORT = {"synthea": "synthea", "mimic_iv": "mimic", "eicu": "eicu"}
 
 
 def _load_split_ids(split_csv: Path, id_col: str, split: str) -> set:
@@ -32,6 +35,7 @@ def run_synthea(data_dir: Path, split: str, max_records: int):
     if max_records:
         pids = pids[:max_records]
     print(f"[Synthea] 환자 {len(pids)}명 처리 시작")
+    run_ts = datetime.now().strftime("%m%d_%H%M%S")
     for pid in pids:
         state = pipeline.invoke({
             "source": "synthea",
@@ -46,7 +50,7 @@ def run_synthea(data_dir: Path, split: str, max_records: int):
             "record": None,
             "error": None,
         })
-        _log(state, split)
+        _log(state, "synthea", run_ts)
 
 
 def run_mimic(data_dir: Path, mode: str, split: str, max_records: int):
@@ -78,6 +82,7 @@ def run_mimic(data_dir: Path, mode: str, split: str, max_records: int):
         hadm_ids = hadm_ids[:max_records]
 
     print(f"[MIMIC-IV] 입원 {len(hadm_ids)}건 처리 시작 (split={split})")
+    run_ts = datetime.now().strftime("%m%d_%H%M%S")
     for hadm_id in hadm_ids:
         a_row = admissions_df[admissions_df["hadm_id"].astype(str) == str(hadm_id)].iloc[0]
         state = pipeline.invoke({
@@ -95,7 +100,7 @@ def run_mimic(data_dir: Path, mode: str, split: str, max_records: int):
             "record": None,
             "error": None,
         })
-        _log(state, split)
+        _log(state, "mimic_iv", run_ts)
 
 
 def run_eicu(data_dir: Path, split: str, max_records: int):
@@ -116,6 +121,7 @@ def run_eicu(data_dir: Path, split: str, max_records: int):
         rows = rows[:max_records]
 
     print(f"[eICU] 환자 {len(rows)}건 처리 시작 (split={split})")
+    run_ts = datetime.now().strftime("%m%d_%H%M%S")
     for _, row in rows:
         stay_id = str(row["patientunitstayid"])
 
@@ -130,7 +136,7 @@ def run_eicu(data_dir: Path, split: str, max_records: int):
                     "record": None,
                     "error": None,
                 })
-                _log(state, split)
+                _log(state, "eicu", run_ts)
                 continue
 
         state = pipeline.invoke({
@@ -145,13 +151,13 @@ def run_eicu(data_dir: Path, split: str, max_records: int):
             "record": None,
             "error": None,
         })
-        _log(state, split)
+        _log(state, "eicu", run_ts)
 
 
 
-def _log(state: dict, split: str = "all"):
+def _log(state: dict, source: str, run_ts: str):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    fname = f"ai_ready_{split}.jsonl" if split != "all" else "ai_ready.jsonl"
+    fname = f"ai_ready_{_SOURCE_SHORT.get(source, source)}_{run_ts}.jsonl"
 
     def _write_log(msg):
         print(msg)
