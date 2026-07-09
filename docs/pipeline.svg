@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 840" font-family="'Segoe UI', 'Malgun Gothic', sans-serif">
+  <rect x="0" y="0" width="900" height="840" fill="#ffffff"/>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+  </defs>
+
+  <!-- ===== source boxes ===== -->
+  <rect x="30" y="20" width="250" height="55" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+  <text x="155" y="42" text-anchor="middle" font-size="13" font-weight="600" fill="#065f46">Synthea</text>
+  <text x="155" y="59" text-anchor="middle" font-size="11" fill="#065f46">(합성 데이터 · 디버깅용)</text>
+
+  <rect x="325" y="20" width="250" height="55" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+  <text x="450" y="42" text-anchor="middle" font-size="13" font-weight="600" fill="#065f46">MIMIC-IV</text>
+  <text x="450" y="59" text-anchor="middle" font-size="11" fill="#065f46">(train 200 · test 50)</text>
+
+  <rect x="620" y="20" width="250" height="55" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+  <text x="745" y="42" text-anchor="middle" font-size="13" font-weight="600" fill="#065f46">eICU</text>
+  <text x="745" y="59" text-anchor="middle" font-size="11" fill="#065f46">(train 200 · test 50)</text>
+
+  <!-- sources -> Agent1 -->
+  <path d="M155,75 L350,140" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M450,75 L450,140" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M745,75 L550,140" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ===== Agent1 ===== -->
+  <rect x="300" y="140" width="300" height="65" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/>
+  <text x="450" y="168" text-anchor="middle" font-size="14" font-weight="600" fill="#312e81">Agent1 · Parser</text>
+  <text x="450" y="186" text-anchor="middle" font-size="11.5" fill="#312e81">소스별 원본 파싱 → AIReadyRecord</text>
+
+  <!-- Agent1 -> Critic (into reflexion group) -->
+  <path d="M450,205 L450,260 L265,260 L265,300" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ===== Reflexion group ===== -->
+  <rect x="110" y="235" width="680" height="300" rx="10" fill="none" stroke="#b45309" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="130" y="260" font-size="12.5" font-weight="600" fill="#b45309">Agent2 · Reflexion (최대 3회 반복)</text>
+
+  <!-- Critic -->
+  <rect x="150" y="300" width="230" height="65" rx="8" fill="#fffbeb" stroke="#b45309" stroke-width="1.5"/>
+  <text x="265" y="320" text-anchor="middle" font-size="13" font-weight="600" fill="#78350f">Critic</text>
+  <text x="265" y="337" text-anchor="middle" font-size="11" fill="#78350f">PMC RAG 근거 대조</text>
+  <text x="265" y="352" text-anchor="middle" font-size="11" fill="#78350f">→ issues 탐지</text>
+
+  <!-- Critic -> decision -->
+  <path d="M380,332 L450,332" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- decision diamond -->
+  <polygon points="560,277 670,332 560,387 450,332" fill="#ffffff" stroke="#374151" stroke-width="1.5"/>
+  <text x="560" y="318" text-anchor="middle" font-size="10.5" fill="#111827">issues 없음</text>
+  <text x="560" y="332" text-anchor="middle" font-size="10.5" fill="#111827">or Q-index</text>
+  <text x="560" y="346" text-anchor="middle" font-size="10.5" fill="#111827">≥ 0.8 ?</text>
+
+  <!-- decision -> Refine (No) -->
+  <path d="M560,387 L560,430" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="572" y="410" font-size="11" fill="#b91c1c">No</text>
+
+  <!-- Refine -->
+  <rect x="445" y="430" width="230" height="65" rx="8" fill="#fffbeb" stroke="#b45309" stroke-width="1.5"/>
+  <text x="560" y="450" text-anchor="middle" font-size="13" font-weight="600" fill="#78350f">Refine</text>
+  <text x="560" y="467" text-anchor="middle" font-size="11" fill="#78350f">issues 기반</text>
+  <text x="560" y="482" text-anchor="middle" font-size="11" fill="#78350f">레코드 재작성</text>
+
+  <!-- Refine -> Critic (loop back) -->
+  <path d="M445,462 L260,462 L260,365" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- decision -> exit (Yes) -->
+  <path d="M670,332 L760,332 L760,545 L450,545 L450,560" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="678" y="322" font-size="11" fill="#15803d">Yes</text>
+
+  <!-- ===== rule audit ===== -->
+  <rect x="330" y="560" width="240" height="55" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/>
+  <text x="450" y="582" text-anchor="middle" font-size="12.5" font-weight="600" fill="#312e81">규칙 기반 최종 감사</text>
+  <text x="450" y="600" text-anchor="middle" font-size="11" fill="#312e81">NR1 · NR2 · NR4 · NR7</text>
+
+  <path d="M450,615 L450,650" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ===== Agent3 ===== -->
+  <rect x="300" y="650" width="300" height="70" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/>
+  <text x="450" y="680" text-anchor="middle" font-size="14" font-weight="600" fill="#312e81">Agent3 · Annotator</text>
+  <text x="450" y="698" text-anchor="middle" font-size="11.5" fill="#312e81">임상 상황 · 역할 · 접근성 점수 부여</text>
+
+  <path d="M450,720 L450,745" fill="none" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ===== output ===== -->
+  <rect x="270" y="745" width="360" height="65" rx="10" fill="#ecfeff" stroke="#0e7490" stroke-width="1.5"/>
+  <text x="450" y="772" text-anchor="middle" font-size="13.5" font-weight="600" fill="#164e63">AI-Ready JSONL</text>
+  <text x="450" y="790" text-anchor="middle" font-size="11" font-family="Consolas, monospace" fill="#164e63">data/output/ai_ready_*.jsonl</text>
+</svg>

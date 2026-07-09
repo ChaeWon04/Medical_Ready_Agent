@@ -6,31 +6,9 @@
 
 ## 파이프라인
 
-```mermaid
-flowchart TD
-    A1["Synthea<br/>(합성 데이터, 디버깅용)"] --> P
-    A2["MIMIC-IV<br/>(train 200 · test 50)"] --> P
-    A3["eICU<br/>(train 200 · test 50)"] --> P
+![파이프라인 구조](docs/pipeline.svg)
 
-    P["<b>Agent1 · Parser</b><br/>소스별 원본 파싱 → AIReadyRecord"] --> C
-
-    subgraph Reflexion["Agent2 · Reflexion (최대 3 loop)"]
-        direction TB
-        C["Critic<br/>PMC 논문 RAG 근거 대조 → issues 탐지"] --> Q{"issues 없음 or<br/>Q-index ≥ 0.8 ?"}
-        Q -- No --> F["Refine<br/>issues 기반 레코드 재작성"] --> C
-        Q -- Yes --> E1["루프 종료"]
-    end
-
-    E1 --> RULE["규칙 기반 최종 감사<br/>NR1 · NR2 · NR4 · NR7"]
-    RULE --> ANN["<b>Agent3 · Annotator</b><br/>임상 상황 · 역할 · 접근성 점수 부여"]
-    ANN --> OUT[["AI-Ready JSONL<br/>data/output/ai_ready_*.jsonl"]]
-
-    VLLM(["vLLM 서버<br/>Qwen/Qwen3-4B"])
-    VLLM -.호출.-> P
-    VLLM -.호출.-> C
-    VLLM -.호출.-> F
-    VLLM -.호출.-> ANN
-```
+Parser, Critic, Refine, Annotator 네 지점 모두 같은 vLLM 서버(Qwen/Qwen3-4B)를 호출한다.
 
 ## 데이터 & 실험 설계
 
