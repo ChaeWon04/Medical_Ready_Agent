@@ -12,11 +12,23 @@ import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
+import config
 from graph.pipeline import pipeline
-from config import OUTPUT_DIR, RUN_LOG
+from config import OUTPUT_DIR
 
 _SOURCE_SHORT = {"synthea": "synthea", "mimic_iv": "mimic", "eicu": "eicu"}
 _KST = ZoneInfo("Asia/Seoul")
+
+
+def _prepare_run(split: str, run_ts: str) -> Path:
+    """data/output/train, data/output/test 로 결과물을 나눠 저장.
+    split="all"인 경우(지금은 synthea만 해당)엔 하위 폴더 없이 data/output/ 바로 아래.
+    Agent2(agent2_reflexion.py)가 config.RUN_LOG를 매번 다시 읽어서 쓰기 때문에, 여기서
+    바꿔치기해두면 main.py 요약 로그랑 Agent2 상세 로그가 같은 파일 하나로 합쳐진다."""
+    out_dir = OUTPUT_DIR / split if split in ("train", "test") else OUTPUT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    config.RUN_LOG = out_dir / f"run.log_{run_ts}"
+    return out_dir
 
 
 def _run_ts() -> str:
@@ -42,6 +54,7 @@ def run_synthea(data_dir: Path, split: str, max_records: int):
         pids = pids[:max_records]
     print(f"[Synthea] 환자 {len(pids)}명 처리 시작")
     run_ts = _run_ts()
+    out_dir = _prepare_run(split, run_ts)
     for pid in pids:
         state = pipeline.invoke({
             "source": "synthea",
@@ -56,7 +69,7 @@ def run_synthea(data_dir: Path, split: str, max_records: int):
             "record": None,
             "error": None,
         })
-        _log(state, "synthea", run_ts)
+        _log(state, "synthea", run_ts, out_dir)
 
 
 def run_mimic(data_dir: Path, mode: str, split: str, max_records: int):
@@ -89,6 +102,7 @@ def run_mimic(data_dir: Path, mode: str, split: str, max_records: int):
 
     print(f"[MIMIC-IV] 입원 {len(hadm_ids)}건 처리 시작 (split={split})")
     run_ts = _run_ts()
+    out_dir = _prepare_run(split, run_ts)
     for hadm_id in hadm_ids:
         a_row = admissions_df[admissions_df["hadm_id"].astype(str) == str(hadm_id)].iloc[0]
         state = pipeline.invoke({
@@ -106,7 +120,7 @@ def run_mimic(data_dir: Path, mode: str, split: str, max_records: int):
             "record": None,
             "error": None,
         })
-        _log(state, "mimic_iv", run_ts)
+        _log(state, "mimic_iv", run_ts, out_dir)
 
 
 def run_eicu(data_dir: Path, split: str, max_records: int):
@@ -128,6 +142,7 @@ def run_eicu(data_dir: Path, split: str, max_records: int):
 
     print(f"[eICU] 환자 {len(rows)}건 처리 시작 (split={split})")
     run_ts = _run_ts()
+    out_dir = _prepare_run(split, run_ts)
     for _, row in rows:
         stay_id = str(row["patientunitstayid"])
 
@@ -142,7 +157,7 @@ def run_eicu(data_dir: Path, split: str, max_records: int):
                     "record": None,
                     "error": None,
                 })
-                _log(state, "eicu", run_ts)
+                _log(state, "eicu", run_ts, out_dir)
                 continue
 
         state = pipeline.invoke({
@@ -157,17 +172,18 @@ def run_eicu(data_dir: Path, split: str, max_records: int):
             "record": None,
             "error": None,
         })
-        _log(state, "eicu", run_ts)
+        _log(state, "eicu", run_ts, out_dir)
 
 
 
-def _log(state: dict, source: str, run_ts: str):
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def _log(state: dict, source: str, run_ts: str, out_dir: Path):
     fname = f"ai_ready_{_SOURCE_SHORT.get(source, source)}_{run_ts}.jsonl"
 
     def _write_log(msg):
+        # config.RUN_LOG는 _prepare_run()이 이미 out_dir에 맞게 바꿔치기해뒀음 -
+        # Agent2(agent2_reflexion.py)의 상세 로그랑 같은 파일에 합쳐서 기록됨
         print(msg)
-        with open(RUN_LOG, "a", encoding="utf-8") as lf:
+        with open(config.RUN_LOG, "a", encoding="utf-8") as lf:
             lf.write(msg + "\n")
 
     if state.get("error"):
@@ -177,7 +193,7 @@ def _log(state: dict, source: str, run_ts: str):
         status = r.get("quality", {}).get("status", "?")
         q = r.get("quality", {}).get("q_index", 0)
         _write_log(f"  [OK] {r.get('record_id', '')[:8]}... | {status} | Q={q:.2f}")
-        with open(OUTPUT_DIR / fname, "a", encoding="utf-8") as f:
+        with open(out_dir / fname, "a", encoding="utf-8") as f:
             f.write(json.dumps(r, default=str, ensure_ascii=False) + "\n")
 
 

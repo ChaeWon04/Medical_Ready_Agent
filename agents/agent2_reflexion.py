@@ -1,15 +1,19 @@
 import json
 import re
+import config
 from models.model_loader import llm
 from rag.retriever import retriever
 from schemas.ai_ready_schema import AIReadyRecord, QualityMetadata, DataStatus
 from agents.criteria import run_rule_checks
-from config import MAX_REFLEXION_LOOPS, QUALITY_THRESHOLD, RUN_LOG
+from config import MAX_REFLEXION_LOOPS, QUALITY_THRESHOLD
 
 
 def _log(msg: str):
+    # config.RUN_LOG를 (이름이 아니라) 모듈 속성으로 매번 읽어야, main.py가 실행 중에
+    # split(train/test)별 경로로 바꿔치기한 값을 그대로 따라간다 - "from config import RUN_LOG"로
+    # 받으면 import 시점 값에 고정돼서 main.py가 나중에 바꿔도 반영이 안 됨
     print(msg)
-    with open(RUN_LOG, "a", encoding="utf-8") as f:
+    with open(config.RUN_LOG, "a", encoding="utf-8") as f:
         f.write(msg + "\n")
 
 CRITIC_SYSTEM = """You are a medical data quality auditor.

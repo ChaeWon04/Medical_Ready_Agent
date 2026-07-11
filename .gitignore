@@ -3,9 +3,13 @@ data/raw/mimic4/*
 data/raw/eICU/*
 !data/raw/mimic4/.gitkeep
 !data/raw/eICU/.gitkeep
-data/output/*
-data/test/*
-!data/test/.gitkeep
+# data/output/train은 Synthea(합성 데이터)만 있어서 규칙 없이 전부 커밋 대상.
+# data/output/test는 MIMIC/eICU 관련 파일이 섞여 있어서 기본적으로 전부 제외하고,
+# 그 중 Synthea 결과물 2개만 예외로 커밋 대상에 포함.
+data/output/test/*
+!data/output/test/.gitkeep
+!data/output/test/ai_ready_synthea_0711_164137.jsonl
+!data/output/test/run.log_0711_1641
 
 # ChromaDB 로컬 빌드 (zip은 git에 커밋, 압축 해제 결과물만 무시 - 코드가 자동 압축해제함)
 chroma_db/

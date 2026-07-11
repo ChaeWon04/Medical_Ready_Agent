@@ -3,7 +3,7 @@ Type3(Hallucination 감소율) 비교용 "단일 LLM Zero-shot" 베이스라인 
 
 에이전트 구조(Parser 규칙기반 처리 -> Critic/Refine 반복검증 -> Annotator) 없이,
 같은 원본 데이터를 Qwen3-4B에 그대로 넣고 딱 한 번만 호출해서 구조화한다.
-data/test/ai_ready_*.jsonl에 이미 있는 것과 동일한 50명(MIMIC)/50명(eICU) 환자에 대해서만 생성.
+data/output/test/ai_ready_*.jsonl에 이미 있는 것과 동일한 50명(MIMIC)/50명(eICU) 환자에 대해서만 생성.
 
 사전 준비물 (main.py 돌릴 때와 동일):
   vllm serve Qwen/Qwen3-4B --port 8000 --dtype auto
@@ -25,7 +25,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))  # evaluation/은 하위 폴더라 models/agents 등을 찾으려면 루트를 sys.path에 추가해야 함
 
 from models.model_loader import llm
-TEST_DIR = ROOT / "data" / "test"
+TEST_DIR = ROOT / "data" / "output" / "test"
 
 SYSTEM_PROMPT = """You are a medical coding assistant.
 Read the raw clinical records below, assign the correct ICD-10 code for each diagnosis yourself
@@ -101,7 +101,7 @@ def _load_test_patient_ids(source: str) -> list[str]:
     pattern = "ai_ready_mimic_*.jsonl" if source == "mimic" else "ai_ready_eicu_*.jsonl"
     matches = sorted(TEST_DIR.glob(pattern))
     if not matches:
-        raise FileNotFoundError(f"{pattern} 파일을 data/test/에서 못 찾음")
+        raise FileNotFoundError(f"{pattern} 파일을 data/output/test/에서 못 찾음")
     ids = []
     with open(matches[-1], encoding="utf-8") as f:
         for line in f:

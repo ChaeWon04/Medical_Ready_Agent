@@ -6,7 +6,7 @@ golden standard가 아니라 원본 원시 테이블과 대조한다 (golden sta
 라벨링된 표본이라 "gold에 없다"가 "원본에 없다"를 의미하지 않기 때문).
 
 - 단일 LLM Zero-shot: evaluation/run_zeroshot_baseline.py 산출물
-- 파이프라인: data/test/ai_ready_*.jsonl
+- 파이프라인: data/output/test/ai_ready_*.jsonl
 
 실행: python evaluation/compute_type3.py
 """
@@ -17,7 +17,7 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).parent.parent
-TEST_DIR = ROOT / "data" / "test"
+TEST_DIR = ROOT / "data" / "output" / "test"
 VOCAB_CSV = ROOT / "data" / "vocab" / "icd9to10.csv"
 
 
@@ -77,6 +77,8 @@ def build_eicu_ground_truth() -> dict[str, dict]:
     diagnosis = pd.read_csv(ROOT / "data/raw/eICU/diagnosis.csv", dtype=str)
     medication = pd.read_csv(ROOT / "data/raw/eICU/medication.csv", dtype=str)
 
+    crosswalk = _load_crosswalk_icd9_to_icd10()
+
     gt: dict[str, dict] = {}
     for stay_id, group in diagnosis.groupby("patientunitstayid"):
         codes = set()
@@ -85,7 +87,11 @@ def build_eicu_ground_truth() -> dict[str, dict]:
             for c in raw.split(","):
                 c = c.strip()
                 if c and c.lower() != "nan":
-                    codes.add(_normalize_code(c))
+                    norm_c = _normalize_code(c)
+                    codes.add(norm_c)
+                    # MIMIC 쪽과 동일하게, ICD-9로 보이는 후보는 크로스워크로 변환한 ICD-10도
+                    # 정답 집합에 같이 넣는다 (원본에 ICD-10 후보가 같이 없는 경우 대비)
+                    codes |= crosswalk.get(norm_c, set())
         gt.setdefault(stay_id, {"dx_codes": set(), "med_names": set()})
         gt[stay_id]["dx_codes"] = codes
 

@@ -1,11 +1,10 @@
 """
-data/test/ 의 ai_ready_*.jsonl vs *_golden_standard*.json(l) 비교해서
+data/output/test/ 의 ai_ready_*.jsonl vs *_golden_standard*.json(l) 비교해서
 Type1(Precision/Recall/F1), Type2(오분류율) 계산.
 
-Type3(Hallucination 감소율)은 zero-shot 베이스라인 산출물이 따로 필요해서
-이 스크립트에는 아직 안 들어있음 (베이스라인 파일 생기면 추가 예정).
+Type3(Hallucination 감소율)은 compute_type3.py에서 별도로 계산.
 
-실행: python eval/compute_metrics.py
+실행: python evaluation/compute_metrics.py
 """
 import json
 import re
@@ -13,7 +12,7 @@ from pathlib import Path
 from collections import Counter
 
 ROOT = Path(__file__).parent.parent
-TEST_DIR = ROOT / "data" / "test"
+TEST_DIR = ROOT / "data" / "output" / "test"
 VOCAB_CSV = ROOT / "data" / "vocab" / "icd9to10.csv"
 
 # eICU는 원본부터 ICD-10이라 정규화 불필요. MIMIC만 아래 크로스워크 필요.
@@ -267,11 +266,18 @@ def type2_report(source: str, gold: list[dict], ai: list[dict], include_situatio
 
 # ── main ─────────────────────────────────────────────────────────────
 
+def _latest(pattern: str) -> Path:
+    matches = sorted(TEST_DIR.glob(pattern))
+    if not matches:
+        raise FileNotFoundError(f"{pattern} 파일을 data/output/test/에서 못 찾음")
+    return matches[-1]
+
+
 def main():
     mimic_gold = load_jsonl(TEST_DIR / "mimic_golden_standard_50.json")
-    mimic_ai = load_jsonl(TEST_DIR / "ai_ready_mimic_0711_152207.jsonl")
+    mimic_ai = load_jsonl(_latest("ai_ready_mimic_*.jsonl"))
     eicu_gold = load_jsonl(TEST_DIR / "eicu_golden_standard.jsonl")
-    eicu_ai = load_jsonl(TEST_DIR / "ai_ready_eicu_0710_193043.jsonl")
+    eicu_ai = load_jsonl(_latest("ai_ready_eicu_*.jsonl"))
 
     type1_results = [
         type1_report("MIMIC", mimic_gold, mimic_ai, use_crosswalk=True, include_observations=False),

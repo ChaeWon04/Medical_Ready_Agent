@@ -14,7 +14,7 @@
     "situation_misclassification_rate": null,
     "situation_excluded_reason": "원본에 입원경로 정보 없음 (파이프라인이 무조건 inpatient로 고정 출력)",
     "situation_mismatch_count": null,
-    "roles_misclassification_rate": 24.0,
-    "roles_mismatch_count": 12
+    "roles_misclassification_rate": 4.0,
+    "roles_mismatch_count": 2
   }
 ]
