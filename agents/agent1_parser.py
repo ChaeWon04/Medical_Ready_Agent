@@ -243,13 +243,16 @@ class Agent1Parser:
             is_active = pd.isna(stop_val) or str(stop_val).strip() in ("", "nan")
             onset = str(row.get("START", "")).strip() or None
             if code:
-                results.append(Diagnosis(
-                    icd10_code=code,
-                    description=desc,
-                    confidence="confirmed",
-                    is_active=is_active,
-                    onset_date=onset,
-                ))
+                try:
+                    results.append(Diagnosis(
+                        icd10_code=code,
+                        description=desc,
+                        confidence="confirmed",
+                        is_active=is_active,
+                        onset_date=onset,
+                    ))
+                except Exception as e:
+                    print(f"  [WARN] diagnosis 항목 건너뜀 (검증 실패): {code!r} -> {e}")
         return results
 
     def _synthea_medications(self, df: pd.DataFrame, pid: str) -> list[Medication]:
@@ -440,7 +443,11 @@ class Agent1Parser:
             else:
                 code = self._format_icd10(raw_code)
             if code:
-                results.append(Diagnosis(icd10_code=code, description=desc, confidence="confirmed"))
+                try:
+                    results.append(Diagnosis(icd10_code=code, description=desc, confidence="confirmed"))
+                except Exception as e:
+                    # 코드 하나가 검증 실패해도 이 환자 레코드 전체가 유실되지 않도록 그 항목만 건너뜀
+                    print(f"  [WARN] diagnosis 항목 건너뜀 (검증 실패): {code!r} -> {e}")
         return results
 
     def _mimic_labevents(self, df: pd.DataFrame, hadm_id: str) -> list[Observation]:
@@ -568,7 +575,10 @@ class Agent1Parser:
                 if key in seen:
                     continue
                 seen.add(key)
-                results.append(Diagnosis(icd10_code=code, description=desc, confidence="confirmed"))
+                try:
+                    results.append(Diagnosis(icd10_code=code, description=desc, confidence="confirmed"))
+                except Exception as e:
+                    print(f"  [WARN] diagnosis 항목 건너뜀 (검증 실패): {code!r} -> {e}")
         return results
 
     # eICU dosage가 가끔 "20 7"처럼 "용량 단위코드" 숫자쌍으로만 들어있음(단위가 텍스트로 안 남고

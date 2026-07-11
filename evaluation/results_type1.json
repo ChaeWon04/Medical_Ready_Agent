@@ -25,13 +25,13 @@
     "source": "eICU",
     "n_patients": 50,
     "diagnoses": {
-      "precision": 0.0,
-      "recall": 0.0,
-      "f1": 0.0,
-      "tp": 0,
-      "fp": 213,
-      "fn": 170,
-      "excluded_unresolved": 33
+      "precision": 0.371,
+      "recall": 0.465,
+      "f1": 0.413,
+      "tp": 79,
+      "fp": 134,
+      "fn": 91,
+      "excluded_unresolved": 7
     },
     "medications": {
       "precision": 1.0,
