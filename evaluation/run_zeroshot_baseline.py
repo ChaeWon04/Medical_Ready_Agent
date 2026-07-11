@@ -27,12 +27,18 @@ sys.path.insert(0, str(ROOT))  # evaluation/은 하위 폴더라 models/agents �
 from models.model_loader import llm
 TEST_DIR = ROOT / "data" / "test"
 
-SYSTEM_PROMPT = """You are a medical data extraction assistant.
-Extract structured information from the raw clinical records below and return ONLY valid JSON. No explanation, no markdown."""
+SYSTEM_PROMPT = """You are a medical coding assistant.
+Read the raw clinical records below, assign the correct ICD-10 code for each diagnosis yourself
+(the input gives only diagnosis names/descriptions, never the code), and return ONLY valid JSON.
+No explanation, no markdown."""
 
-ZEROSHOT_PROMPT = """Below is raw clinical data for one patient. Extract diagnoses and medications
-and return them in the exact JSON format shown. Do not invent any value that is not present or
-directly implied by the data below.
+# 주의: 프롬프트에 ICD 코드를 절대 미리 주지 않는다. 진단명 텍스트만 주고 LLM이 직접
+# ICD-10 코드를 매기게 해야 한다. 코드를 프롬프트에 넣어주면 LLM이 그냥 그 코드를 베껴
+# 쓰기만 해도 "hallucination 없음"으로 잘못 채점되어(실제로 확인된 문제) 비교가 무의미해진다.
+ZEROSHOT_PROMPT = """Below is raw clinical data for one patient (diagnosis names and medication names only -
+no codes are given, you must determine the ICD-10 code yourself). Extract diagnoses and medications
+and return them in the exact JSON format shown. Do not invent any diagnosis or medication that is not
+present or directly implied by the data below.
 
 Raw data:
 {raw_data}
@@ -104,14 +110,28 @@ def _load_test_patient_ids(source: str) -> list[str]:
     return ids
 
 
-def _mimic_raw_text(subject_id: str, admissions, diagnoses_icd, prescriptions) -> str:
+def _load_mimic_desc_lookup() -> dict[tuple[str, str], str]:
+    """(icd_code, icd_version) -> long_title. 코드는 프롬프트에 안 주고, 이 설명 텍스트만 준다."""
+    lookup = {}
+    for fname in ("d_icd_diagnoses_ICD9.csv", "d_icd_diagnoses_ICD10.csv"):
+        p = ROOT / "data/raw/mimic4" / fname
+        if p.exists():
+            df = pd.read_csv(p, dtype=str)
+            for _, row in df.iterrows():
+                lookup[(row["icd_code"], row["icd_version"])] = row["long_title"]
+    return lookup
+
+
+def _mimic_raw_text(subject_id: str, admissions, diagnoses_icd, prescriptions, desc_lookup) -> str:
     lines = []
     adm = admissions[admissions["subject_id"].astype(str) == subject_id]
     if not adm.empty:
         lines.append(f"Admission type: {adm.iloc[0].get('admission_type', '')}")
     dx = diagnoses_icd[diagnoses_icd["subject_id"].astype(str) == subject_id]
     for _, row in dx.iterrows():
-        lines.append(f"Diagnosis code (ICD-{row['icd_version']}): {row['icd_code']}")
+        desc = desc_lookup.get((row["icd_code"], row["icd_version"]), "")
+        if desc:
+            lines.append(f"Diagnosis: {desc}")
     rx = prescriptions[prescriptions["subject_id"].astype(str) == subject_id]
     for _, row in rx.iterrows():
         lines.append(f"Prescription: {row['drug']} {row.get('dose_val_rx', '')}{row.get('dose_unit_rx', '')} via {row.get('route', '')}")
@@ -122,7 +142,11 @@ def _eicu_raw_text(stay_id: str, diagnosis, medication) -> str:
     lines = []
     dx = diagnosis[diagnosis["patientunitstayid"].astype(str) == stay_id]
     for _, row in dx.iterrows():
-        lines.append(f"Diagnosis: {row['diagnosisstring']} (code candidates: {row.get('icd9code', '')})")
+        raw_desc = str(row.get("diagnosisstring", "")).strip()
+        parts = [p.strip() for p in raw_desc.split("|") if p.strip()]
+        desc = ", ".join(parts[1:]) if len(parts) > 1 else raw_desc
+        if desc:
+            lines.append(f"Diagnosis: {desc}")
     rx = medication[medication["patientunitstayid"].astype(str) == stay_id]
     for _, row in rx.iterrows():
         lines.append(f"Medication: {row['drugname']} {row.get('dosage', '')} via {row.get('routeadmin', '')}")
@@ -137,8 +161,9 @@ def run(source: str):
         admissions = pd.read_csv(ROOT / "data/raw/mimic4/admissions.csv", dtype=str)
         diagnoses_icd = pd.read_csv(ROOT / "data/raw/mimic4/diagnoses_icd.csv", dtype=str)
         prescriptions = pd.read_csv(ROOT / "data/raw/mimic4/prescriptions.csv", dtype=str)
+        desc_lookup = _load_mimic_desc_lookup()
         out_path = TEST_DIR / "zeroshot_mimic.jsonl"
-        raw_fn = lambda pid: _mimic_raw_text(pid, admissions, diagnoses_icd, prescriptions)
+        raw_fn = lambda pid: _mimic_raw_text(pid, admissions, diagnoses_icd, prescriptions, desc_lookup)
     else:
         diagnosis = pd.read_csv(ROOT / "data/raw/eICU/diagnosis.csv", dtype=str)
         medication = pd.read_csv(ROOT / "data/raw/eICU/medication.csv", dtype=str)

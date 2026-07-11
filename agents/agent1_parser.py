@@ -73,6 +73,21 @@ Rules:
 Clinical note:
 {note}"""
 
+def _safe_build(model_cls, items: list, label: str) -> list:
+    """개별 항목 하나가 스키마 검증에 실패해도 레코드 전체가 통째로 날아가지 않도록,
+    실패한 항목만 건너뛰고 나머지는 살린다. (예: LLM 노트 추출 시 icd10_code에
+    ICD-9 E-code 같은 잘못된 형식이 하나 섞여 나오면 그 진단 하나만 버리고
+    나머지 진단·투약·검사는 그대로 유지 - 예전엔 여기서 예외가 나면 parse_node까지
+    전파돼서 환자 레코드 자체가 통째로 유실됐음)"""
+    results = []
+    for item in items:
+        try:
+            results.append(model_cls(**item))
+        except Exception as e:
+            print(f"  [WARN] {label} 항목 건너뜀 (검증 실패): {item} -> {e}")
+    return results
+
+
 def _load_icd9_mapping() -> dict:
     csv_path = Path(__file__).parent.parent / "data" / "vocab" / "icd9to10.csv"
     if csv_path.exists():
@@ -96,9 +111,12 @@ def _load_icd9_mapping() -> dict:
 
 ICD9_TO_ICD10 = _load_icd9_mapping()
 
-# ICD-10 코드 형식(문자 1개 + 숫자 2자리로 시작, 예: K76.9, A41.9) - eICU 후보 목록에서
-# 이미 ICD-10인 후보를 크로스워크 변환 전에 우선 선별할 때 사용
-_ICD10_FORMAT = re.compile(r"^[A-Z]\d{2}")
+# ICD-10 코드 형식 검증 - schemas/ai_ready_schema.py의 Diagnosis.validate_icd10()와 반드시
+# 동일한 정규식을 써야 함. "^[A-Z]\d{2}"처럼 접두사만 보면 ICD-9 E-code(예: E980.2, 점 앞이
+# 4글자)도 "문자+숫자2개로 시작한다"는 이유로 오인해서 크로스워크 변환을 건너뛰게 되고,
+# 그 변환 안 된 ICD-9 코드가 그대로 흘러가 Pydantic 검증에서 레코드 전체가 죽는 원인이 됐음
+# (2026-07-11 발견). 점 앞이 정확히 3글자여야 하는 전체 일치 검증으로 바꿔서 방지.
+_ICD10_FORMAT = re.compile(r"^[A-Z][0-9][0-9A-Z](\.[0-9A-Z]{1,4})?$")
 
 EXTRACT_SCHEMA = {
     "type": "object",
@@ -388,9 +406,9 @@ class Agent1Parser:
             record_id=str(uuid.uuid4()),
             source="mimic_iv",
             patient_id=subject_id,
-            diagnoses=[Diagnosis(**d) for d in extracted.get("diagnoses", [])],
-            medications=[Medication(**m) for m in extracted.get("medications", [])],
-            observations=[Observation(**o) for o in extracted.get("observations", [])],
+            diagnoses=_safe_build(Diagnosis, extracted.get("diagnoses", []), "diagnosis"),
+            medications=_safe_build(Medication, extracted.get("medications", []), "medication"),
+            observations=_safe_build(Observation, extracted.get("observations", []), "observation"),
             clinical_text=note_text,
             quality=QualityMetadata(reflexion_loops=0, q_index=0.0, status=DataStatus.NEEDS_REVIEW),
         )
@@ -500,9 +518,9 @@ class Agent1Parser:
             record_id=str(uuid.uuid4()),
             source="eicu",
             patient_id=patient_stay_id,
-            diagnoses=[Diagnosis(**d) for d in extracted.get("diagnoses", [])],
-            medications=[Medication(**m) for m in extracted.get("medications", [])],
-            observations=[Observation(**o) for o in extracted.get("observations", [])],
+            diagnoses=_safe_build(Diagnosis, extracted.get("diagnoses", []), "diagnosis"),
+            medications=_safe_build(Medication, extracted.get("medications", []), "medication"),
+            observations=_safe_build(Observation, extracted.get("observations", []), "observation"),
             clinical_text=note_text,
             quality=QualityMetadata(reflexion_loops=0, q_index=0.0, status=DataStatus.NEEDS_REVIEW),
         )
