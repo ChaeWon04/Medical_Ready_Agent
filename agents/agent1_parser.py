@@ -77,7 +77,15 @@ def _load_icd9_mapping() -> dict:
     csv_path = Path(__file__).parent.parent / "data" / "vocab" / "icd9to10.csv"
     if csv_path.exists():
         df = pd.read_csv(csv_path, dtype=str, header=0)
-        return dict(zip(df.iloc[:, 0].str.strip(), df.iloc[:, 1].str.strip()))
+        codes = df.iloc[:, 0].str.strip()
+        targets = df.iloc[:, 1].str.strip()
+        mapping = dict(zip(codes, targets))
+        # MIMIC 원본 diagnoses_icd.csv의 ICD-9 코드는 점(.) 없이 저장되지만
+        # (예: "2851"), 크로스워크 코드는 점 포함 형식이 대부분이라(예: "285.1")
+        # 그대로 조회하면 대부분 미스매치로 LLM 추측 폴백을 탔음. 점 없는 키도
+        # 같이 등록해 두 형식 다 매칭되게 함 (eICU는 이미 점 포함 형식이라 영향 없음).
+        mapping.update(dict(zip(codes.str.replace(".", "", regex=False), targets)))
+        return mapping
     # CSV 없을 때 fallback
     return {
         "250.00": "E11.9", "250.02": "E11.9", "401.9": "I10",
