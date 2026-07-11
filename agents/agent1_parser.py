@@ -96,6 +96,10 @@ def _load_icd9_mapping() -> dict:
 
 ICD9_TO_ICD10 = _load_icd9_mapping()
 
+# ICD-10 코드 형식(문자 1개 + 숫자 2자리로 시작, 예: K76.9, A41.9) - eICU 후보 목록에서
+# 이미 ICD-10인 후보를 크로스워크 변환 전에 우선 선별할 때 사용
+_ICD10_FORMAT = re.compile(r"^[A-Z]\d{2}")
+
 EXTRACT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -523,11 +527,19 @@ class Agent1Parser:
             desc = ", ".join(parts[1:]) if len(parts) > 1 else raw_desc
             icd9_raw = str(row.get("icd9code", "")).strip()
             codes = [c.strip() for c in icd9_raw.split(",") if c.strip() and c.strip().lower() != "nan"]
+            # eICU의 icd9code 필드는 같은 진단에 ICD-9/ICD-10 후보가 콤마로 같이 들어있는 경우가
+            # 흔함(예: "573.9, K76.9"). 순서대로 크로스워크부터 태우면 이미 정확한 ICD-10 후보가
+            # 있어도 무시하고 앞쪽 ICD-9 후보를 변환한 (더 부정확할 수 있는) 코드로 덮어써버림.
+            # 그래서 ICD-10 형식(문자+숫자2자리로 시작)인 후보를 최우선으로 그대로 사용.
             code = None
-            for c in codes:
-                code = ICD9_TO_ICD10.get(c)
-                if code:
-                    break
+            icd10_like = [c for c in codes if _ICD10_FORMAT.match(c)]
+            if icd10_like:
+                code = self._format_icd10(icd10_like[0])
+            else:
+                for c in codes:
+                    code = ICD9_TO_ICD10.get(c)
+                    if code:
+                        break
             if not code:
                 code = self._llm_to_icd10(desc) if desc else None
             if code:

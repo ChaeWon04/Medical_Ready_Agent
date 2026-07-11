@@ -168,7 +168,7 @@ def prf(tp: int, fp: int, fn: int) -> tuple[float, float, float]:
     return round(precision, 3), round(recall, 3), round(f1, 3)
 
 
-def type1_report(source: str, gold: list[dict], ai: list[dict], use_crosswalk: bool, include_observations: bool):
+def type1_report(source: str, gold: list[dict], ai: list[dict], use_crosswalk: bool, include_observations: bool) -> dict:
     gold_idx = index_by_patient(gold)
     ai_idx = index_by_patient(ai)
     common = sorted(set(gold_idx) & set(ai_idx))
@@ -189,16 +189,28 @@ def type1_report(source: str, gold: list[dict], ai: list[dict], use_crosswalk: b
             tp, fp, fn = match_observations(g.get("observations", []), a.get("observations", []))
             obs_tp += tp; obs_fp += fp; obs_fn += fn
 
-    print(f"\n[{source}] Type1 추출 성능 (환자 {len(common)}명 대조)")
+    result = {"source": source, "n_patients": len(common)}
+
     p, r, f1 = prf(dx_tp, dx_fp, dx_fn)
-    print(f"  diagnoses   P={p} R={r} F1={f1}  (TP={dx_tp} FP={dx_fp} FN={dx_fn}, MANUAL_REVIEW 제외={dx_excl})")
+    result["diagnoses"] = {"precision": p, "recall": r, "f1": f1,
+                            "tp": dx_tp, "fp": dx_fp, "fn": dx_fn, "excluded_unresolved": dx_excl}
+
     p, r, f1 = prf(med_tp, med_fp, med_fn)
-    print(f"  medications P={p} R={r} F1={f1}  (TP={med_tp} FP={med_fp} FN={med_fn})")
+    result["medications"] = {"precision": p, "recall": r, "f1": f1, "tp": med_tp, "fp": med_fp, "fn": med_fn}
+
     if include_observations:
         p, r, f1 = prf(obs_tp, obs_fp, obs_fn)
-        print(f"  observations P={p} R={r} F1={f1}  (TP={obs_tp} FP={obs_fp} FN={obs_fn})")
+        result["observations"] = {"precision": p, "recall": r, "f1": f1,
+                                   "tp": obs_tp, "fp": obs_fp, "fn": obs_fn}
     else:
-        print("  observations - 평가 제외 (원본에 lab 데이터 없음)")
+        result["observations"] = None  # 원본에 lab 데이터 없어 평가 제외 (MIMIC)
+
+    print(f"\n[{source}] Type1 추출 성능 (환자 {len(common)}명 대조)")
+    print(f"  diagnoses   {result['diagnoses']}")
+    print(f"  medications {result['medications']}")
+    print(f"  observations {result['observations'] or '평가 제외 (원본에 lab 데이터 없음)'}")
+
+    return result
 
 
 # ── Type2: 오분류율 ──────────────────────────────────────────────────
@@ -207,7 +219,11 @@ def type1_report(source: str, gold: list[dict], ai: list[dict], use_crosswalk: b
 _SITUATION_ALIAS = {"icu": "inpatient"}
 
 
-def type2_report(source: str, gold: list[dict], ai: list[dict]):
+def type2_report(source: str, gold: list[dict], ai: list[dict], include_situation: bool) -> dict:
+    """include_situation=False인 소스(eICU)는 situation을 아예 계산하지 않는다.
+    eICU는 원본에 입원경로(unitadmitsource) 정보가 없어 파이프라인이 무조건 'inpatient'로
+    고정 출력하는 구조적 한계라, 오분류율을 계산해도 AI 성능이 아니라 데이터 결손을
+    측정하는 셈이라 지표에서 제외하기로 함 (한계점으로만 별도 서술)."""
     gold_idx = index_by_patient(gold)
     ai_idx = index_by_patient(ai)
     common = sorted(set(gold_idx) & set(ai_idx))
@@ -221,16 +237,32 @@ def type2_report(source: str, gold: list[dict], ai: list[dict]):
         if not g_ctx or not a_ctx:
             continue
         n += 1
-        g_sit = _SITUATION_ALIAS.get(g_ctx["situation"], g_ctx["situation"])
-        a_sit = _SITUATION_ALIAS.get(a_ctx["situation"], a_ctx["situation"])
-        if g_sit != a_sit:
-            sit_mismatch += 1
+        if include_situation:
+            g_sit = _SITUATION_ALIAS.get(g_ctx["situation"], g_ctx["situation"])
+            a_sit = _SITUATION_ALIAS.get(a_ctx["situation"], a_ctx["situation"])
+            if g_sit != a_sit:
+                sit_mismatch += 1
         if set(g_ctx.get("roles", [])) != set(a_ctx.get("roles", [])):
             roles_mismatch += 1
 
+    result = {
+        "source": source,
+        "n_labeled": n,
+        "situation_misclassification_rate": round(sit_mismatch / n * 100, 1) if (include_situation and n) else None,
+        "situation_excluded_reason": None if include_situation else "원본에 입원경로 정보 없음 (파이프라인이 무조건 inpatient로 고정 출력)",
+        "situation_mismatch_count": sit_mismatch if include_situation else None,
+        "roles_misclassification_rate": round(roles_mismatch / n * 100, 1) if n else None,
+        "roles_mismatch_count": roles_mismatch,
+    }
+
     print(f"\n[{source}] Type2 오분류율 (context 라벨 있는 {n}명 대조)")
-    print(f"  situation 오분류율: {round(sit_mismatch / n * 100, 1) if n else 'N/A'}%  ({sit_mismatch}/{n})")
-    print(f"  roles 오분류율:     {round(roles_mismatch / n * 100, 1) if n else 'N/A'}%  ({roles_mismatch}/{n})")
+    if include_situation:
+        print(f"  situation 오분류율: {result['situation_misclassification_rate']}%  ({sit_mismatch}/{n})")
+    else:
+        print(f"  situation - 평가 제외 ({result['situation_excluded_reason']})")
+    print(f"  roles 오분류율:     {result['roles_misclassification_rate']}%  ({roles_mismatch}/{n})")
+
+    return result
 
 
 # ── main ─────────────────────────────────────────────────────────────
@@ -241,12 +273,24 @@ def main():
     eicu_gold = load_jsonl(TEST_DIR / "eicu_golden_standard.jsonl")
     eicu_ai = load_jsonl(TEST_DIR / "ai_ready_eicu_0710_193043.jsonl")
 
-    type1_report("MIMIC", mimic_gold, mimic_ai, use_crosswalk=True, include_observations=False)
-    type1_report("eICU", eicu_gold, eicu_ai, use_crosswalk=False, include_observations=True)
+    type1_results = [
+        type1_report("MIMIC", mimic_gold, mimic_ai, use_crosswalk=True, include_observations=False),
+        type1_report("eICU", eicu_gold, eicu_ai, use_crosswalk=False, include_observations=True),
+    ]
+    type2_results = [
+        type2_report("MIMIC", mimic_gold, mimic_ai, include_situation=True),
+        type2_report("eICU", eicu_gold, eicu_ai, include_situation=False),
+    ]
 
-    type2_report("MIMIC", mimic_gold, mimic_ai)
-    type2_report("eICU", eicu_gold, eicu_ai)
+    out1 = Path(__file__).parent / "results_type1.json"
+    out2 = Path(__file__).parent / "results_type2.json"
+    with open(out1, "w", encoding="utf-8") as f:
+        json.dump(type1_results, f, ensure_ascii=False, indent=2)
+    with open(out2, "w", encoding="utf-8") as f:
+        json.dump(type2_results, f, ensure_ascii=False, indent=2)
 
+    print(f"\n저장 완료: {out1}")
+    print(f"저장 완료: {out2}")
     print(
         "\nType3 (Hallucination 감소율)은 zero-shot 베이스라인 결과가 아직 없어서 생략."
         " 베이스라인 파일 생기면 이어서 추가."

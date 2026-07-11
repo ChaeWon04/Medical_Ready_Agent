@@ -1,0 +1,42 @@
+{
+  "MIMIC": {
+    "pipeline": {
+      "diagnoses_total": 539,
+      "diagnoses_hallucinated": 48,
+      "diagnoses_hallucination_rate": 8.9,
+      "medications_total": 1922,
+      "medications_hallucinated": 1,
+      "medications_hallucination_rate": 0.1
+    },
+    "zeroshot": {
+      "diagnoses_total": 449,
+      "diagnoses_hallucinated": 0,
+      "diagnoses_hallucination_rate": 0.0,
+      "medications_total": 846,
+      "medications_hallucinated": 10,
+      "medications_hallucination_rate": 1.2
+    },
+    "diagnoses_hallucination_reduction_pct": null,
+    "medications_hallucination_reduction_pct": 91.7
+  },
+  "eICU": {
+    "pipeline": {
+      "diagnoses_total": 213,
+      "diagnoses_hallucinated": 131,
+      "diagnoses_hallucination_rate": 61.5,
+      "medications_total": 1067,
+      "medications_hallucinated": 0,
+      "medications_hallucination_rate": 0.0
+    },
+    "zeroshot": {
+      "diagnoses_total": 343,
+      "diagnoses_hallucinated": 42,
+      "diagnoses_hallucination_rate": 12.2,
+      "medications_total": 853,
+      "medications_hallucinated": 264,
+      "medications_hallucination_rate": 30.9
+    },
+    "diagnoses_hallucination_reduction_pct": -404.1,
+    "medications_hallucination_reduction_pct": 100.0
+  }
+}

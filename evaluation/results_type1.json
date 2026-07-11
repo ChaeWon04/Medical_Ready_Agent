@@ -1,0 +1,53 @@
+[
+  {
+    "source": "MIMIC",
+    "n_patients": 50,
+    "diagnoses": {
+      "precision": 0.909,
+      "recall": 1.0,
+      "f1": 0.952,
+      "tp": 490,
+      "fp": 49,
+      "fn": 0,
+      "excluded_unresolved": 49
+    },
+    "medications": {
+      "precision": 0.999,
+      "recall": 0.987,
+      "f1": 0.993,
+      "tp": 1921,
+      "fp": 1,
+      "fn": 26
+    },
+    "observations": null
+  },
+  {
+    "source": "eICU",
+    "n_patients": 50,
+    "diagnoses": {
+      "precision": 0.183,
+      "recall": 0.443,
+      "f1": 0.259,
+      "tp": 39,
+      "fp": 174,
+      "fn": 49,
+      "excluded_unresolved": 21
+    },
+    "medications": {
+      "precision": 1.0,
+      "recall": 0.965,
+      "f1": 0.982,
+      "tp": 1067,
+      "fp": 0,
+      "fn": 39
+    },
+    "observations": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 8786,
+      "fp": 0,
+      "fn": 0
+    }
+  }
+]
