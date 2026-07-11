@@ -16,13 +16,15 @@ data/test/ai_ready_*.jsonl에 이미 있는 것과 동일한 50명(MIMIC)/50명(
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 import pandas as pd
 
-from models.model_loader import llm
-
 ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))  # evaluation/은 하위 폴더라 models/agents 등을 찾으려면 루트를 sys.path에 추가해야 함
+
+from models.model_loader import llm
 TEST_DIR = ROOT / "data" / "test"
 
 SYSTEM_PROMPT = """You are a medical data extraction assistant.
