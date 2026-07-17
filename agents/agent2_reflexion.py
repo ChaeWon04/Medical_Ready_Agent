@@ -30,10 +30,15 @@ Medical record:
 Return JSON with this format:
 {{
   "issues": [
-    {{"field": "...", "issue": "...", "suggested_fix": "..."}}
+    {{"field": "...", "issue": "...", "suggested_fix": "...", "code": "NR5"}}
   ],
   "passed": true
 }}
+
+Each issue's "code" must be exactly one of:
+- "NR11" — medication dose/unit errors (check 1 below)
+- "NR5"  — everything else (negation failures, reference-context contradictions, copy-forward
+  duplicates, no active diagnoses — checks 2-5 below)
 
 The reference context only covers a few of this patient's conditions — it is background reading, not a checklist.
 A diagnosis/medication/observation that is simply not mentioned in the context is NOT an error by itself.
@@ -198,17 +203,24 @@ class Agent2Reflexion:
         active_dx = [d for d in best_record.diagnoses if d.is_active]
         has_context = bool(best_record.chief_complaint or best_record.symptoms)
 
-        reason_codes = sorted({i.get("code", "") for i in rule_issues if i.get("code")})
-        if best_issues:
-            reason_codes.append("NR8")
+        reason_codes = {i.get("code", "") for i in rule_issues if i.get("code")}
+        # Critic이 각 issue에 매긴 code(NR5/NR11)를 그대로 씀. LLM이 code를 빼먹거나
+        # 잘못된 값을 주면(스키마 enum이 있어도 완전히 강제는 안 되므로) NR8(catch-all)로 대체.
+        reason_codes |= {
+            i["code"] if i.get("code") in ("NR5", "NR11") else "NR8"
+            for i in best_issues
+        }
         if not active_dx:
-            reason_codes.append("NR9")
+            reason_codes.add("NR9")
         if not has_context:
-            reason_codes.append("NR3")
+            reason_codes.add("NR3")
+        reason_codes = sorted(reason_codes)
 
         best_record.quality = QualityMetadata(
             reflexion_loops=best_loops,
-            hallucination_flags=[i.get("issue", "") for i in all_issues],
+            hallucination_flags=[
+                f"[{i.get('code') or 'NR8'}] {i.get('issue', '')}" for i in all_issues
+            ],
             reason_codes=reason_codes,
             q_index=self._calc_q_index(best_record, all_issues, best_loops),
             status=(
@@ -261,6 +273,7 @@ class Agent2Reflexion:
                             "field": {"type": "string"},
                             "issue": {"type": "string"},
                             "suggested_fix": {"type": "string"},
+                            "code": {"type": "string", "enum": ["NR5", "NR11"]},
                         },
                     },
                 },
