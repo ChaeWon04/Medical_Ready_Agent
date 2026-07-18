@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Tuple
 from datetime import datetime
 from enum import Enum
 import re
@@ -69,7 +69,8 @@ class ClinicalContext(BaseModel):
 
 class QualityMetadata(BaseModel):
     """Agent 2 Reflexion 루프 결과"""
-    reflexion_loops: int = Field(ge=0, le=3)
+    reflexion_loops: int = Field(ge=0, le=3)  # Critic/Refine이 실제로 몇 번 돌았는지
+    chosen_loop: Tuple[int, float]  # (최종 채택된 회차, 그 시점의 q_index)
     hallucination_flags: List[str] = []  # 감지된 오류 목록
     reason_codes: List[str] = []  # golden standard 사유 코드 (NR1, NR8 등) - agents/criteria.py 참고
     q_index: float = Field(ge=0.0, le=1.0)  # 품질 지수

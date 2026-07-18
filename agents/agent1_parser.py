@@ -219,7 +219,7 @@ class Agent1Parser:
             medications=meds,
             observations=obs,
             encounter_date=encounter_date,
-            quality=QualityMetadata(reflexion_loops=0, q_index=0.0, status=DataStatus.NEEDS_REVIEW),
+            quality=QualityMetadata(reflexion_loops=0, chosen_loop=(0, 0.0), q_index=0.0, status=DataStatus.NEEDS_REVIEW),
         )
 
     def _calc_age(self, birthdate_str: str) -> Optional[int]:
@@ -400,7 +400,7 @@ class Agent1Parser:
             medications=medications,
             observations=observations,
             encounter_date=encounter_date,
-            quality=QualityMetadata(reflexion_loops=0, q_index=0.0, status=DataStatus.NEEDS_REVIEW),
+            quality=QualityMetadata(reflexion_loops=0, chosen_loop=(0, 0.0), q_index=0.0, status=DataStatus.NEEDS_REVIEW),
         )
 
     def parse_mimic_note(self, note_text: str, subject_id: str, hadm_id: str = "") -> AIReadyRecord:
@@ -413,7 +413,7 @@ class Agent1Parser:
             medications=_safe_build(Medication, extracted.get("medications", []), "medication"),
             observations=_safe_build(Observation, extracted.get("observations", []), "observation"),
             clinical_text=note_text,
-            quality=QualityMetadata(reflexion_loops=0, q_index=0.0, status=DataStatus.NEEDS_REVIEW),
+            quality=QualityMetadata(reflexion_loops=0, chosen_loop=(0, 0.0), q_index=0.0, status=DataStatus.NEEDS_REVIEW),
         )
 
     def _mimic_diagnoses(self, df: pd.DataFrame, subject_id: str, hadm_id: str,
@@ -516,7 +516,7 @@ class Agent1Parser:
             diagnoses=diagnoses,
             medications=self._eicu_medications(medication_df, patient_stay_id),
             observations=self._eicu_labs(lab_df, patient_stay_id),
-            quality=QualityMetadata(reflexion_loops=0, q_index=0.0, status=DataStatus.NEEDS_REVIEW),
+            quality=QualityMetadata(reflexion_loops=0, chosen_loop=(0, 0.0), q_index=0.0, status=DataStatus.NEEDS_REVIEW),
         )
 
     def parse_eicu_note(self, note_text: str, patient_stay_id: str) -> AIReadyRecord:
@@ -529,7 +529,7 @@ class Agent1Parser:
             medications=_safe_build(Medication, extracted.get("medications", []), "medication"),
             observations=_safe_build(Observation, extracted.get("observations", []), "observation"),
             clinical_text=note_text,
-            quality=QualityMetadata(reflexion_loops=0, q_index=0.0, status=DataStatus.NEEDS_REVIEW),
+            quality=QualityMetadata(reflexion_loops=0, chosen_loop=(0, 0.0), q_index=0.0, status=DataStatus.NEEDS_REVIEW),
         )
 
     _EICU_PRIORITY_ORDER = {"primary": 0, "major": 1, "other": 2}

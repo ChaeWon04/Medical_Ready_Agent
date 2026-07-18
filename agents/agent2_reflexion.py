@@ -193,6 +193,7 @@ class Agent2Reflexion:
             record = self._refine(record, issues)
 
         best_record, best_issues, best_loops = min(history, key=lambda x: len(x[1]))
+        reflexion_loops = len(history)
 
         # 최종 규칙 기반 감사 (NR1/NR2/NR4/NR7) - refine 루프엔 안 넣음.
         # 이유: 정말 데이터가 비어있는 걸 LLM이 "고치려고" 하면 값을 지어내서 hallucination만 늘어남.
@@ -215,14 +216,16 @@ class Agent2Reflexion:
         if not has_context:
             reason_codes.add("NR3")
         reason_codes = sorted(reason_codes)
+        final_q_index = self._calc_q_index(best_record, all_issues, best_loops)
 
         best_record.quality = QualityMetadata(
-            reflexion_loops=best_loops,
+            reflexion_loops=reflexion_loops,
+            chosen_loop=(best_loops, final_q_index),
             hallucination_flags=[
                 f"[{i.get('code') or 'NR8'}] {i.get('issue', '')}" for i in all_issues
             ],
             reason_codes=reason_codes,
-            q_index=self._calc_q_index(best_record, all_issues, best_loops),
+            q_index=final_q_index,
             status=(
                 DataStatus.AI_READY
                 if (not all_issues and active_dx and has_context)
