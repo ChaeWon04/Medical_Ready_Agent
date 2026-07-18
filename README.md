@@ -35,14 +35,23 @@ Synthea로 파이프라인 로직 자체를 먼저 검증하고, 그다음 실�
 ### Agent1 · Parser (`agents/agent1_parser.py`)
 소스별 원본 테이블/노트를 파싱해 공통 스키마(`schemas/ai_ready_schema.py`의 `AIReadyRecord`)로
 변환한다. ICD-10 코드 형식 검증, 약물 단위 정규화(UCUM/RxNorm 화이트리스트), STOP 컬럼 기반
-`is_active` 판정을 이 단계에서 규칙 기반으로 처리한다.
+`is_active` 판정을 이 단계에서 규칙 기반으로 처리한다. MIMIC/eICU의 ICD-9 코드는 OHDSI Athena
+표준 어휘집(`data/vocab/Athena.zip`)에서 추출한 크로스워크로 ICD-10으로 변환하고, 크로스워크에
+없는 코드만 LLM 폴백을 쓴다. 진단 항목 하나가 검증에 실패해도 그 항목만 건너뛰고 나머지
+필드는 그대로 보존해, 레코드 전체가 유실되지 않게 방어적으로 처리한다.
 
 ### Agent2 · Reflexion (`agents/agent2_reflexion.py`)
 - **Critic**: `rag/retriever.py`로 PMC 논문에서 관련 근거를 검색해 컨텍스트로 주고, Critic LLM이
-  약물 용량 오류·negation 오류·근거와의 모순 등을 찾아 `issues` 리스트로 반환한다.
+  약물 용량 오류·negation 오류·근거와의 모순 등을 찾아 `issues` 리스트로 반환한다. 각 issue에는
+  LLM이 직접 `NR11`(약물 용량/단위 오류) 또는 `NR5`(그 외 논리·문맥 오류)를 부여하고, 코드가
+  빠지거나 유효하지 않으면 `NR8`로 대체한다.
 - **Refine**: issues가 있으면 그걸 기반으로 레코드를 재작성한다.
 - 이 과정을 issues가 없어지거나 `q_index >= QUALITY_THRESHOLD`(0.8)가 될 때까지 최대
   `MAX_REFLEXION_LOOPS`(3)회 반복하고, 그중 issue가 가장 적은 버전을 최종으로 채택한다.
+  `quality.reflexion_loops`는 실제로 실행된 총 루프 횟수, `quality.chosen_loop`는 그중
+  최종 채택된 `(회차, 그 시점 q_index)` 튜플이다 — 마지막 회차가 이전 대비 개선이 없으면
+  두 값이 달라질 수 있다 (예: 3회 다 돌았지만 2회차 결과를 채택 → `reflexion_loops=3`,
+  `chosen_loop=(2, 0.75)`).
 - 채택된 레코드에는 규칙 기반 최종 감사(NR1/NR2/NR4/NR7)를 한 번 더 돌린다. 이 결과는 refine
   대상으로 넘기지 않고 사유 코드 기록에만 쓴다 — 빈 값을 LLM이 억지로 채우게 하면
   hallucination만 늘어나기 때문에 의도적으로 분리했다.
@@ -66,7 +75,7 @@ Synthea로 파이프라인 로직 자체를 먼저 검증하고, 그다음 실�
 | NR5 | 문맥/논리 해석 불가 | llm | 임상적 선후관계 붕괴, negation 포함 구조적 불일치 |
 | NR6 | 시스템/파싱 오류 | upstream | JSON 문법 오류·truncation (parse 단계에서 error로 이미 차단) |
 | NR7 | 개인정보 노출 | rule | 연구원 실명·병원 코드·로컬 경로 등 파이프라인이 새로 흘린 정보 (현장 데이터 대비용 안전망) |
-| NR8 | Reflexion Critic 검출 | gate | Critic LLM이 찾은 임상/구조적 모순 전체의 catch-all 라벨 |
+| NR8 | Reflexion Critic 검출 | gate | Critic LLM이 찾은 모순 중 NR5/NR11 코드가 빠졌거나 유효하지 않을 때의 catch-all 라벨 |
 | NR9 | 활성 진단 없음 | gate | `is_active=true` 진단이 0개 |
 | NR10 | 코드-설명 불일치 | upstream | ICD 코드와 description 불일치 (파싱 단계에서 공식 크로스워크로 이미 차단) |
 | NR11 | 약물 단위 오류 | llm | 투약 용량 단위 혼용(g/mg/mcg) 또는 비정상 수치 |
@@ -85,8 +94,47 @@ Synthea로 파이프라인 로직 자체를 먼저 검증하고, 그다음 실�
 
 최종 `status`는 issues가 전혀 없고, 활성 진단이 있고, 주호소/증상 중 하나라도 있어야
 `AI_READY`, 그렇지 않으면 `NEEDS_REVIEW`로 기록한다 (`DataStatus`, `schemas/ai_ready_schema.py`).
-사람 라벨링 검증셋과의 상관관계는 아직 검증하지 못한 휴리스틱이라, 절대적인 정확도 지표가
-아니라 루프 내 상대적 품질 신호로만 쓰고 있다.
+Q-index는 사람 라벨링 검증셋과의 상관관계는 검증하지 못한 휴리스틱이라, 절대적인 정확도
+지표가 아니라 루프 내 상대적 품질 신호로만 쓴다 — 실제 정확도는 아래 golden standard 대조
+평가로 별도 측정한다.
+
+## 평가 결과 (Golden Standard 대조)
+
+Q-index는 파이프라인 내부 신호일 뿐이라, 사람이 라벨링한 golden standard와 직접 대조하는
+정량 평가를 `evaluation/`에 별도로 구현했다. 전체 수치는 `evaluation/RESULTS.md` 참고.
+
+### Type1 — 추출 성능 (golden standard 대비 Precision/Recall/F1, `evaluation/compute_metrics.py`)
+
+| 소스 | 항목 | Precision | Recall | F1 |
+|---|---|---|---|---|
+| MIMIC | diagnoses | 0.909 | 1.0 | **0.952** |
+| MIMIC | medications | 0.999 | 0.987 | **0.993** |
+| eICU | diagnoses | 0.768 | 0.982 | **0.862** |
+| eICU | medications | 1.0 | 0.988 | **0.994** |
+| eICU | observations | 1.0 | 1.0 | **1.0** |
+
+### Type2 — Agent3 오분류율 (`evaluation/compute_metrics.py`)
+
+| 소스 | 항목 | 오분류율 |
+|---|---|---|
+| MIMIC | situation | 0.0% |
+| MIMIC | roles | 0.0% |
+| eICU | situation | 평가 제외* |
+| eICU | roles | 4.0% |
+
+\* eICU 원본에는 입원 경로 필드가 없어 situation이 사실상 고정 출력되므로 평가 대상에서 뺐다.
+
+### Type3 — Hallucination 감소율 (단일 LLM Zero-shot 대비, `evaluation/compute_type3.py`)
+
+Zero-shot 베이스라인은 프롬프트에 정답 코드를 주지 않고 진단/투약 설명 텍스트만 준 뒤 LLM이
+직접 코드를 배정하게 해서, 파이프라인과 동일한 조건에서 비교한다 (`evaluation/run_zeroshot_baseline.py`).
+
+| 소스 | 항목 | 파이프라인 환각률 | Zero-shot 환각률 | 감소율 |
+|---|---|---|---|---|
+| MIMIC | diagnoses | 8.9% | 86.2% | **89.7%** |
+| MIMIC | medications | 0.1% | 2.3% | **95.7%** |
+| eICU | diagnoses | 19.9% | 92.6% | **78.5%** |
+| eICU | medications | 0.0% | 31.1% | **100.0%** |
 
 ## RAG (PMC 논문 근거)
 
