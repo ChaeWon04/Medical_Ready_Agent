@@ -25,8 +25,11 @@ Synthea로 파이프라인 로직 자체를 먼저 검증하고, 그다음 실�
 
 ## 모델
 
-생성은 전부 **Qwen/Qwen3-4B**로 수행한다. 파이프라인 프로세스 자체는 모델을 들고 있지 않고,
-별도로 띄운 **vLLM 서버**에 OpenAI 호환 API로 요청만 보내는 구조로 만들었다 (`models/model_loader.py`).
+생성은 전부 **Qwen/Qwen3-4B**로 수행한다. MIMIC-IV/eICU 같은 규제 의료 데이터를 OpenAI·Anthropic
+등 외부 API로 보내면 그 자체로 데이터 유출이라, **오픈소스 모델을 자체 호스팅**해서 환자 데이터가
+로컬 인프라 밖으로 절대 나가지 않도록 모델을 선택했다. 파이프라인 프로세스 자체는 모델을 들고
+있지 않고, 별도로 띄운 **vLLM 서버**에 OpenAI 호환 API로 요청만 보내는 구조로 만들었다
+(`models/model_loader.py`) — 이 vLLM 서버도 로컬/자체 인프라에서만 띄운다.
 재현성을 우선해 `ENABLE_THINKING=False`(non-thinking 모드 고정), `MAX_NEW_TOKENS=2048`,
 `TEMPERATURE=0.1`로 고정했다.
 
