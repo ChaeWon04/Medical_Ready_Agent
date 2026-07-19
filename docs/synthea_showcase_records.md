@@ -1,4 +1,4 @@
-# Synthea 시연 레코드 4건 (chosen_loop 필드 추가)
+# Synthea 시연 레코드 4건
 
 ## Figure 1 - 12세 (Otitis media, RAG 근거 대조, NR5)
 
